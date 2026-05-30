@@ -1,7 +1,13 @@
+import sys
+import os
+# Proje kökünü path'e ekle — 'agent' modülü bulunabilsin
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import asyncio
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
@@ -14,6 +20,9 @@ app = FastAPI(title="AI Video Editor Agent")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 connected_clients: list[WebSocket] = []
+
+from agent.claude_client import ClaudeClient
+claude = ClaudeClient()
 
 
 @app.websocket("/ws")
@@ -36,19 +45,12 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 async def handle_command(ws: WebSocket, data: dict):
-    # PHASE_4'te Claude entegrasyonu gelecek
-    cmd = data.get("command", "")
-    await ws.send_json({
-        "type": "progress",
-        "step": "received",
-        "status": "ok",
-        "message": f"Komut alındı: {cmd[:60]}"
-    })
-    await asyncio.sleep(0.5)
-    await ws.send_json({
-        "type": "result",
-        "text": f"[PHASE_2 TEST] Komut işlendi: {cmd[:60]}"
-    })
+    try:
+        async for chunk in claude.process(data):
+            await ws.send_json(chunk)
+    except Exception as e:
+        logger.error(f"Komut işleme hatası: {e}", exc_info=True)
+        await ws.send_json({"type": "error", "message": str(e)})
 
 
 @app.get("/health")
