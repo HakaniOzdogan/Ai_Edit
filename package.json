@@ -1,0 +1,14 @@
+{
+  "name": "ai-video-editor",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "cross-env ELECTRON_RUN_AS_NODE= electron .",
+    "build": "electron-builder --win"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0",
+    "electron": "^28.3.3",
+    "electron-builder": "^24.0.0"
+  }
+}
