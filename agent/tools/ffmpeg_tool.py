@@ -27,7 +27,11 @@ def find_ffmpeg() -> tuple[str, str]:
     raise FileNotFoundError("ffmpeg bulunamadı — PATH'e ekle: https://ffmpeg.org")
 
 
-FFMPEG_BIN, FFPROBE_BIN = find_ffmpeg()
+try:
+    FFMPEG_BIN, FFPROBE_BIN = find_ffmpeg()
+except FileNotFoundError as _e:
+    logger.warning(f"FFmpeg bulunamadı — tool'lar devre dışı: {_e}")
+    FFMPEG_BIN, FFPROBE_BIN = "ffmpeg", "ffprobe"
 
 
 class FFmpegTool:

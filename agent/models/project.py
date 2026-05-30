@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -17,7 +17,7 @@ class ProjectConfig(BaseModel):
     style: str        # dark | fast | warm | corp
     music_choice: str
     reference: Optional[str] = None
-    created_at: datetime = datetime.now()
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class CommandMessage(BaseModel):

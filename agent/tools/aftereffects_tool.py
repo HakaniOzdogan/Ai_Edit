@@ -19,8 +19,23 @@ from string import Template
 
 logger = logging.getLogger(__name__)
 
-AE_DIR      = r"C:\Program Files\Adobe\Adobe After Effects 2026\Support Files"
-AFTERFX_EXE = os.path.join(AE_DIR, "AfterFX.exe")
+def _find_ae_dir() -> str:
+    import glob, winreg
+    # Registry'den dene
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Adobe\After Effects") as k:
+            ver = winreg.EnumKey(k, 0)
+            with winreg.OpenKey(k, ver) as vk:
+                return winreg.QueryValueEx(vk, "InstallPath")[0]
+    except Exception:
+        pass
+    # Glob fallback
+    matches = sorted(glob.glob(r"C:\Program Files\Adobe\Adobe After Effects *\Support Files"))
+    return matches[-1] if matches else r"C:\Program Files\Adobe\Adobe After Effects 2026\Support Files"
+
+AE_DIR       = _find_ae_dir()
+AFTERFX_EXE  = os.path.join(AE_DIR, "AfterFX.exe")
 AERENDER_EXE = os.path.join(AE_DIR, "aerender.exe")
 TEMP_DIR    = Path(os.getenv("TEMP_DIR", "./temp")).resolve()
 

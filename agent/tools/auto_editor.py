@@ -42,8 +42,7 @@ def build_timeline(beat_times: list, scored_clips: list,
     return timeline
 
 
-def write_concat_list(timeline: list, temp_dir: str,
-                      ffmpeg_tool) -> tuple[str, list]:
+def write_concat_list(timeline: list, temp_dir: str) -> tuple[str, list]:
     temp_clips = []
     list_lines = []
 

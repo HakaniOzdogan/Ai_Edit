@@ -16,8 +16,21 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-PP_DIR    = r"C:\Program Files\Adobe\Adobe Premiere Pro 2026"
-PP_EXE    = os.path.join(PP_DIR, "Adobe Premiere Pro.exe")
+def _find_pp_dir() -> str:
+    import glob, winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Adobe\Premiere Pro") as k:
+            ver = winreg.EnumKey(k, 0)
+            with winreg.OpenKey(k, ver) as vk:
+                return winreg.QueryValueEx(vk, "InstallPath")[0]
+    except Exception:
+        pass
+    matches = sorted(glob.glob(r"C:\Program Files\Adobe\Adobe Premiere Pro *"))
+    return matches[-1] if matches else r"C:\Program Files\Adobe\Adobe Premiere Pro 2026"
+
+PP_DIR      = _find_pp_dir()
+PP_EXE      = os.path.join(PP_DIR, "Adobe Premiere Pro.exe")
 PP_HEADLESS = os.path.join(PP_DIR, "PProHeadless.exe")
 TEMP_DIR  = Path(os.getenv("TEMP_DIR", "./temp")).resolve()
 
