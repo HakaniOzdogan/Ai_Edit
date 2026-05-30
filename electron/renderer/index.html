@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ws://localhost:8765 http://localhost:8765">
+  <title>AI Video Editor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+
+    <div id="titlebar">
+      <span id="app-title">AI Video Editor</span>
+      <div id="titlebar-right">
+        <span id="connection-label">Agent</span>
+        <span id="connection-status" class="status-dot disconnected" title="Agent bağlantısı"></span>
+      </div>
+    </div>
+
+    <div id="main-layout">
+
+      <!-- Sol: Medya Paneli -->
+      <div id="left-panel">
+        <div class="panel-header">Medya</div>
+        <div id="drop-zone">
+          <div class="drop-icon">⬇</div>
+          <p>Video ve fotoğrafları buraya sürükle</p>
+          <p class="drop-hint">MP4, MOV, AVI, JPG, PNG</p>
+        </div>
+        <div id="media-list"></div>
+        <div class="panel-section">
+          <div class="panel-label">Müzik</div>
+          <div id="music-zone" class="mini-drop">Müzik dosyası sürükle (MP3, WAV)</div>
+          <div id="music-info"></div>
+        </div>
+      </div>
+
+      <!-- Orta: Preview -->
+      <div id="center-panel">
+        <div class="panel-header">
+          <span>Önizleme</span>
+          <div id="render-controls">
+            <button id="btn-demo" class="btn btn-primary" disabled>Demo Oluştur</button>
+            <button id="btn-final" class="btn btn-secondary" disabled>Final Render</button>
+          </div>
+        </div>
+        <div id="video-wrap">
+          <video id="preview-player" controls>
+            <source id="preview-src" src="" type="video/mp4">
+          </video>
+          <div id="player-placeholder">
+            <span>Demo render sonrası burada görünür</span>
+          </div>
+        </div>
+        <div id="progress-wrap">
+          <div id="progress-bar-bg">
+            <div id="progress-bar" style="width:0%"></div>
+          </div>
+          <span id="progress-label">Hazır</span>
+        </div>
+        <div id="qa-score-wrap" style="display:none">
+          <span id="qa-grade">—</span>
+          <span id="qa-score">—</span>
+        </div>
+      </div>
+
+      <!-- Sağ: AI Chat -->
+      <div id="right-panel">
+        <div class="panel-header">AI Asistan</div>
+        <div id="chat-messages"></div>
+        <div id="quick-actions">
+          <button class="quick-btn" data-cmd="demo oluştur">Demo Oluştur</button>
+          <button class="quick-btn" data-cmd="final render al">Final Render</button>
+          <button class="quick-btn" data-cmd="qa raporu göster">QA Raporu</button>
+        </div>
+        <div id="chat-input-area">
+          <textarea id="chat-input" placeholder="Komut yaz..." rows="2"></textarea>
+          <button id="send-btn">Gönder</button>
+        </div>
+      </div>
+
+    </div>
+
+    <div id="timeline-panel">
+      <div class="panel-header">Timeline</div>
+      <div id="timeline-track"></div>
+    </div>
+
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
