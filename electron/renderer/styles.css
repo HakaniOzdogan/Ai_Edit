@@ -482,6 +482,147 @@ body {
 .summary-row span { color: var(--text-muted); }
 .summary-row strong { color: var(--accent); }
 
+/* ── DaVinci Popup ──────────────────────────────────────────────────────────── */
+#dvr-popup {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  backdrop-filter: blur(6px);
+}
+
+#dvr-popup-box {
+  background: var(--bg-secondary);
+  border: 0.5px solid var(--border);
+  border-radius: 14px;
+  width: 500px;
+  max-width: 94vw;
+  padding: 28px 28px 22px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.7);
+}
+
+#dvr-popup-icon { font-size: 36px; margin-bottom: 10px; }
+
+#dvr-popup-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+#dvr-popup-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 18px;
+  line-height: 1.6;
+}
+
+#dvr-steps { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+
+.dvr-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.dvr-step-num {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dvr-step b { color: var(--text-primary); }
+
+#dvr-cmd-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-tertiary);
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+#dvr-cmd {
+  flex: 1;
+  font-size: 11px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: var(--accent);
+  word-break: break-all;
+  user-select: all;
+}
+
+#dvr-copy-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+#dvr-copy-btn:hover { background: var(--bg-hover); }
+
+#dvr-cmd-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 20px;
+}
+#dvr-cmd-hint b { color: var(--accent-green); }
+
+#dvr-popup-footer { display: flex; gap: 10px; justify-content: flex-end; }
+
+#dvr-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.dvr-dot-idle    { width:10px;height:10px;border-radius:50%;background:var(--error);flex-shrink:0; }
+.dvr-dot-loading { width:10px;height:10px;border-radius:50%;background:var(--warning);flex-shrink:0;animation:blink 0.8s infinite; }
+.dvr-dot-ok      { width:10px;height:10px;border-radius:50%;background:var(--accent-green);flex-shrink:0;box-shadow:0 0 6px var(--accent-green); }
+
+#dvr-progress-wrap {
+  margin-bottom: 14px;
+}
+
+#dvr-progress-bar {
+  height: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.8s ease;
+  margin-bottom: 5px;
+}
+
+#dvr-progress-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.dvr-manual-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
 /* ── Light Tema ─────────────────────────────────────────────────────────────── */
 [data-theme="light"] {
   --bg-primary:   #f0f0f4;
