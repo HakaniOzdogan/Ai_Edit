@@ -17,7 +17,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Video Editor Agent")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware,
+    allow_origins=["http://localhost:8765", "http://127.0.0.1:8765"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"]
+)
 
 connected_clients: list[WebSocket] = []
 

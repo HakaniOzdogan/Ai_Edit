@@ -9,6 +9,10 @@ def build_timeline(beat_times: list, scored_clips: list,
     beat_skip = {"dark": 4, "fast": 1, "warm": 3, "corp": 2}.get(style, 2)
     cut_beats = [beat_times[i] for i in range(0, len(beat_times), beat_skip)]
 
+    if not scored_clips:
+        logger.error("scored_clips boş — klip listesi sağlanmalı")
+        return []
+
     timeline = []
     clip_pool = scored_clips.copy()
     clip_index = 0

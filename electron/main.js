@@ -47,9 +47,24 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null })
 }
 
-app.whenReady().then(() => {
+async function waitForAgent(maxMs = 20000) {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    try {
+      const res = await fetch('http://localhost:8765/health')
+      if (res.ok) return true
+    } catch {}
+    await new Promise(r => setTimeout(r, 500))
+  }
+  return false
+}
+
+app.whenReady().then(async () => {
   startAgent()
-  setTimeout(createWindow, 2000)
+  console.log('[main] Agent hazır olana kadar bekleniyor...')
+  const ready = await waitForAgent()
+  if (!ready) console.warn('[main] Agent 20sn içinde hazır olmadı, pencere yine de açılıyor')
+  createWindow()
 })
 
 app.on('window-all-closed', () => {

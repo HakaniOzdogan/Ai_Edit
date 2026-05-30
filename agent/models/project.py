@@ -22,7 +22,7 @@ class ProjectConfig(BaseModel):
 
 class CommandMessage(BaseModel):
     type: str = "command"
-    command: str
+    command: str = ""
     project_id: str
     files: Optional[MediaFiles] = None
     profile: Optional[str] = None
