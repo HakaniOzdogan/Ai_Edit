@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="tr" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,6 +14,9 @@
   <div id="titlebar">
     <span id="app-title">AI Video Editor</span>
     <div id="titlebar-right">
+      <button id="btn-save-project" class="title-btn" title="Projeyi Kaydet">💾</button>
+      <button id="btn-load-project" class="title-btn" title="Proje Aç">📂</button>
+      <button id="theme-toggle"     class="title-btn" title="Tema Değiştir">☀</button>
       <span id="connection-label">Bağlanıyor...</span>
       <span id="connection-status" class="status-dot disconnected"></span>
     </div>
@@ -53,16 +56,29 @@
       <div id="progress-bar-bg"><div id="progress-bar" style="width:0%"></div></div>
       <span id="progress-label">Hazır</span>
     </div>
+
+    <!-- QA Raporu -->
+    <div id="qa-result" style="display:none">
+      <div id="qa-header">
+        <span id="qa-grade-badge">—</span>
+        <span id="qa-score-label">QA Skoru: —</span>
+        <button id="qa-toggle-detail" class="title-btn" title="Detay">▾</button>
+      </div>
+      <div id="qa-detail" style="display:none">
+        <ul id="qa-issues"></ul>
+        <ul id="qa-suggestions"></ul>
+      </div>
+    </div>
   </div>
 
   <div id="right-panel">
     <div class="panel-header">AI Asistan</div>
     <div id="chat-messages"></div>
     <div id="quick-actions">
-      <button class="quick-btn" data-cmd="demo oluştur">Demo</button>
-      <button class="quick-btn" data-cmd="final render al">Final</button>
-      <button class="quick-btn" data-cmd="qa raporu göster">QA</button>
+      <button class="quick-btn" data-cmd="demo">Demo</button>
+      <button class="quick-btn" data-cmd="final">Final</button>
       <button class="quick-btn" data-cmd="kurguyu açıkla">Açıkla</button>
+      <button class="quick-btn" data-cmd="qa raporu göster">QA</button>
     </div>
     <div id="chat-input-area">
       <textarea id="chat-input" placeholder="Komut yaz..." rows="2"></textarea>

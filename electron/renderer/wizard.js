@@ -130,6 +130,21 @@ class ProjectWizard {
         <div class="wiz-ref-card ${this.config.reference === 'none' ? 'selected' : ''}" data-ref="none">
           <span>⏭</span><p>Referanssız Devam</p>
         </div>
+        <div class="wiz-ref-card ${this.config.reference === 'link' ? 'selected' : ''}" data-ref="link">
+          <span>🔗</span><p>Referans Link</p>
+        </div>
+        <div class="wiz-ref-card ${this.config.reference === 'profile' ? 'selected' : ''}" data-ref="profile">
+          <span>🎨</span><p>Kayıtlı Profil</p>
+        </div>
+      </div>
+      <div id="wiz-ref-link-wrap" style="display:none;margin-top:10px">
+        <input id="wiz-ref-url" type="text" placeholder="https://... veya lokal dosya yolu"
+               style="width:100%;padding:7px 10px;background:var(--bg-tertiary);border:0.5px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px;outline:none">
+      </div>
+      <div id="wiz-ref-profile-wrap" style="display:none;margin-top:10px">
+        <select id="wiz-profile-select" style="width:100%;padding:7px 10px;background:var(--bg-tertiary);border:0.5px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px">
+          <option value="">Yükleniyor...</option>
+        </select>
       </div>`
     setTimeout(() => {
       div.querySelectorAll('.wiz-ref-card').forEach(card => {
@@ -137,10 +152,43 @@ class ProjectWizard {
           this.config.reference = card.dataset.ref
           div.querySelectorAll('.wiz-ref-card').forEach(c => c.classList.remove('selected'))
           card.classList.add('selected')
+          // Koşullu input göster
+          document.getElementById('wiz-ref-link-wrap').style.display =
+            this.config.reference === 'link' ? 'block' : 'none'
+          const profileWrap = document.getElementById('wiz-ref-profile-wrap')
+          profileWrap.style.display = this.config.reference === 'profile' ? 'block' : 'none'
+          // Profil listesini yükle
+          if (this.config.reference === 'profile') this._loadProfiles()
         })
+      })
+      document.getElementById('wiz-ref-url')?.addEventListener('input', e => {
+        this.config.referenceUrl = e.target.value.trim()
+      })
+      document.getElementById('wiz-profile-select')?.addEventListener('change', e => {
+        this.config.selectedProfile = e.target.value
       })
     }, 0)
     return div
+  }
+
+  async _loadProfiles() {
+    const sel = document.getElementById('wiz-profile-select')
+    if (!sel) return
+    try {
+      const base = window.electronAPI?.agentHttpUrl() || 'http://localhost:8765'
+      const res  = await fetch(base + '/profiles')
+      const data = await res.json()
+      if (data.profiles?.length) {
+        sel.innerHTML = data.profiles
+          .map(p => `<option value="${p}">${p}</option>`)
+          .join('')
+        this.config.selectedProfile = data.profiles[0]
+      } else {
+        sel.innerHTML = '<option value="">Kayıtlı profil yok</option>'
+      }
+    } catch {
+      sel.innerHTML = '<option value="">Profiller yüklenemedi</option>'
+    }
   }
 
   _step5() {
@@ -181,6 +229,17 @@ class ProjectWizard {
       document.getElementById('wizard-error').textContent = 'Lütfen bir seçim yapın.'
       return false
     }
+    // Step 3: müzik opsiyonel ama uyarı ver
+    if (this.step === 3 && !this.config.music) {
+      document.getElementById('wizard-error').textContent =
+        '⚠ Müzik seçilmedi — beat senkronizasyonu yapılamaz, devam etmek için tekrar tıkla'
+      // İlk tıklamada uyar ama blokla, ikinci tıklamada geç
+      if (!this._musicWarningShown) {
+        this._musicWarningShown = true
+        return false
+      }
+      this._musicWarningShown = false
+    }
     return true
   }
 
@@ -204,7 +263,12 @@ class ProjectWizard {
 
   _finish() {
     this.overlay.remove()
-    this.onComplete(this.config)
+    const now = new Date()
+    this.onComplete({
+      ...this.config,
+      name:         `Proje ${now.toLocaleDateString('tr')} ${now.toLocaleTimeString('tr', {hour:'2-digit',minute:'2-digit'})}`,
+      music_choice: this.config.music ? 'file' : 'none',
+    })
   }
 
   destroy() {

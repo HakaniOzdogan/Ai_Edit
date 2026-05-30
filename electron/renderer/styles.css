@@ -482,6 +482,87 @@ body {
 .summary-row span { color: var(--text-muted); }
 .summary-row strong { color: var(--accent); }
 
+/* ── Light Tema ─────────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg-primary:   #f0f0f4;
+  --bg-secondary: #ffffff;
+  --bg-tertiary:  #e8e8ef;
+  --bg-hover:     #dcdce8;
+  --border:       #c8c8d8;
+  --text-primary: #1a1a2e;
+  --text-muted:   #666680;
+  --text-dim:     #aaaabc;
+  --accent:       #7c3aed;
+  --accent-hover: #6d28d9;
+  --accent-green: #16a34a;
+  --error:        #dc2626;
+}
+
+/* ── Titlebar Butonları ─────────────────────────────────────────────────────── */
+.title-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+  -webkit-app-region: no-drag;
+  line-height: 1;
+}
+.title-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ── QA Raporu ──────────────────────────────────────────────────────────────── */
+#qa-result {
+  border-top: 0.5px solid var(--border);
+  padding: 7px 14px;
+  flex-shrink: 0;
+}
+
+#qa-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#qa-grade-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: #888;
+  flex-shrink: 0;
+}
+
+#qa-score-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+#qa-detail {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 0.5px solid var(--border);
+}
+
+#qa-issues, #qa-suggestions {
+  list-style: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+#qa-issues li    { color: var(--error); }
+#qa-suggestions li { color: var(--accent); }
+
 /* ── Scrollbar ──────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

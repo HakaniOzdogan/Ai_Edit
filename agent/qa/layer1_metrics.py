@@ -92,20 +92,25 @@ class MetricQA:
     # ── Siyah Kare ───────────────────────────────────────────────────────────
 
     async def _check_black_frames(self, video_path: str) -> dict:
-        """FFprobe blackdetect filtresi ile siyah kareleri tespit eder."""
+        """FFmpeg blackdetect filtresi ile siyah kareleri tespit eder."""
         if not Path(video_path).exists():
-            return {"score": 100, "note": "Video yok"}
+            return {"score": 50, "note": "Video yok", "black_events": 0}
 
         cmd = [
-            "ffprobe", "-v", "error",
+            "ffmpeg", "-y",
+            "-i", video_path,
             "-vf", "blackdetect=d=0.05:pix_th=0.1",
-            "-an", "-f", "null", video_path
+            "-an", "-f", "null", "-"
         ]
         result = await asyncio.to_thread(
             subprocess.run, cmd, capture_output=True, text=True
         )
-        output = result.stderr
-        black_events = output.count("black_start")
+
+        if result.returncode != 0 and "black_start" not in result.stderr:
+            return {"score": 50, "note": f"FFmpeg hata kodu {result.returncode}",
+                    "black_events": 0}
+
+        black_events = result.stderr.count("black_start")
 
         if black_events == 0:
             score = 100.0
