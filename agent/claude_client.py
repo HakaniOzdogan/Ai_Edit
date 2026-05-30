@@ -2,12 +2,17 @@ import anthropic
 import asyncio
 import logging
 import os
+import shutil
 import time
+import uuid
 from pathlib import Path
 from agent.tools.music_analyzer import MusicAnalyzer
 from agent.tools.clip_scorer import ClipScorer
 from agent.tools.ffmpeg_tool import FFmpegTool
 from agent.tools.auto_editor import build_timeline, write_concat_list
+from agent.tools.davinci_tool import DaVinciTool
+from agent.tools.aftereffects_tool import AfterEffectsTool
+from agent.qa.orchestrator import QAOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +119,45 @@ TOOLS = [
             },
             "required": ["operation", "output_path"]
         }
+    },
+    {
+        "name": "apply_color_preset",
+        "description": "DaVinci Resolve'da tarz bazlı LUT uygular. Resolve açık ve bridge hazır olmalı.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "style": {"type": "string", "enum": ["dark", "warm", "corp", "fast"],
+                          "description": "Uygulanacak renk tarzı"}
+            },
+            "required": ["style"]
+        }
+    },
+    {
+        "name": "logo_reveal",
+        "description": "After Effects ile logo reveal animasyonu üretir ve MP4 olarak kaydeder.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "logo_path": {"type": "string", "description": "Logo dosyasının tam yolu (PNG/SVG)"},
+                "duration":  {"type": "number", "description": "Animasyon süresi (saniye, varsayılan 3)"},
+                "output_path": {"type": "string", "description": "Çıktı MP4 yolu (opsiyonel)"}
+            },
+            "required": ["logo_path"]
+        }
+    },
+    {
+        "name": "add_text_overlay",
+        "description": "After Effects ile lower third metin overlay'i üretir.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title":    {"type": "string", "description": "Ana başlık metni"},
+                "subtitle": {"type": "string", "description": "Alt başlık metni (opsiyonel)"},
+                "duration": {"type": "number", "description": "Görünme süresi (saniye)"},
+                "output_path": {"type": "string", "description": "Çıktı MP4 yolu (opsiyonel)"}
+            },
+            "required": ["title"]
+        }
     }
 ]
 
@@ -121,11 +165,19 @@ TOOLS = [
 class ClaudeClient:
 
     def __init__(self):
-        # Senkron client — asyncio.to_thread ile event loop bloklanmaz
-        self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        self.music  = MusicAnalyzer()
-        self.scorer = ClipScorer()
-        self.ffmpeg = FFmpegTool()
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY eksik — .env dosyasını kontrol et\n"
+                "Örnek: ANTHROPIC_API_KEY=sk-ant-..."
+            )
+        self.client  = anthropic.Anthropic(api_key=api_key)
+        self.music   = MusicAnalyzer()
+        self.scorer  = ClipScorer()
+        self.ffmpeg  = FFmpegTool()
+        self.davinci = DaVinciTool()
+        self.ae      = AfterEffectsTool()
+        self.qa      = QAOrchestrator()
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     async def process(self, data: dict):
@@ -134,35 +186,57 @@ class ClaudeClient:
             yield {"type": "error", "message": "Komut boş olamaz"}
             return
 
+        # render_type alanı varsa Claude'u atla, doğrudan render et
+        render_type = data.get("render_type")
+        if render_type in ("demo", "final"):
+            async for chunk in self._direct_render(data, render_type):
+                yield chunk
+            return
+
         messages = [{"role": "user", "content": self._build_prompt(data)}]
         context  = {
-            "files":    data.get("files", {}),
-            "style":    data.get("style", "dark"),
-            "project":  data.get("project_id", f"proj_{int(time.time())}"),
-            "timeline": None,
+            "files":            data.get("files", {}),
+            "style":            data.get("style", "dark"),
+            "project":          data.get("project_id", f"proj_{int(time.time())}"),
+            "timeline":         None,
+            "music_analysis":   None,
         }
 
         yield {"type": "progress", "step": "claude_thinking", "status": "running",
                "message": "Claude düşünüyor..."}
 
         while True:
-            # Senkron API çağrısını thread'e taşı — event loop bloke olmaz
-            response = await asyncio.to_thread(
-                self.client.messages.create,
-                model="claude-sonnet-4-6",
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=messages
-            )
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.messages.create,
+                        model="claude-sonnet-4-6",
+                        max_tokens=4096,
+                        system=SYSTEM_PROMPT,
+                        tools=TOOLS,
+                        messages=messages
+                    ),
+                    timeout=120.0
+                )
+            except asyncio.TimeoutError:
+                yield {"type": "error", "message": "Claude yanıt vermiyor (120s timeout) — lütfen tekrar dene"}
+                return
 
             if response.stop_reason == "end_turn":
                 text = next((b.text for b in response.content if hasattr(b, "text")), "")
-                result = {"type": "result", "text": text}
-                if context.get("last_output"):
-                    result["output_path"] = context["last_output"]
-                if context.get("timeline"):
-                    result["timeline"] = context["timeline"]
+                result = {
+                    "type":        "result",
+                    "text":        text,
+                    "output_path": context.get("last_output"),
+                    "timeline":    context.get("timeline"),
+                }
+                # QA sonuçlarını ekle
+                if context.get("qa_report"):
+                    qa = context["qa_report"]
+                    result["qa_score"] = qa.get("final_score")
+                    result["qa_grade"] = qa.get("grade")
+                    result["qa_pass"]  = qa.get("pass")
+                    result["qa_report"] = qa
                 yield result
                 break
 
@@ -183,9 +257,9 @@ class ClaudeClient:
                            "result_summary": str(result)[:200]}
 
                     tool_results.append({
-                        "type": "tool_result",
+                        "type":        "tool_result",
                         "tool_use_id": block.id,
-                        "content": str(result)
+                        "content":     str(result)
                     })
 
                 messages.append({"role": "user", "content": tool_results})
@@ -194,10 +268,99 @@ class ClaudeClient:
                 logger.warning(f"Beklenmeyen stop_reason: {response.stop_reason}")
                 break
 
+    async def _direct_render(self, data: dict, quality: str):
+        """Claude'u atla — doğrudan render_timeline + QA çalıştır."""
+        files   = data.get("files", {})
+        context = {
+            "files":          files,
+            "style":          data.get("style", "dark"),
+            "project":        data.get("project_id", f"proj_{int(time.time())}"),
+            "timeline":       None,
+            "music_analysis": None,
+        }
+
+        yield {"type": "progress", "step": "direct_render", "status": "running",
+               "message": f"{quality} render başlatılıyor..."}
+
+        clips = files.get("clips", [])
+        music = files.get("music")
+
+        if not clips:
+            yield {"type": "error", "message": "Render için klip gerekli"}
+            return
+
+        # Müzik analizi
+        music_analysis = None
+        if music:
+            yield {"type": "progress", "tool": "analyze_music", "status": "running",
+                   "message": "Müzik analiz ediliyor..."}
+            music_analysis = await self.music.analyze(music)
+            context["music_analysis"] = music_analysis
+            yield {"type": "progress", "tool": "analyze_music", "status": "done",
+                   "result_summary": f"BPM: {music_analysis.get('bpm')}"}
+
+        # Klip skorla
+        yield {"type": "progress", "tool": "score_clips", "status": "running",
+               "message": "Klipler puanlanıyor..."}
+        scored = await self.scorer.score(clips)
+        yield {"type": "progress", "tool": "score_clips", "status": "done",
+               "result_summary": f"{len(scored)} klip puanlandı"}
+
+        if not scored:
+            yield {"type": "error", "message": "Klip skorlama başarısız"}
+            return
+
+        # Timeline oluştur
+        beat_times = (music_analysis or {}).get("beat_times", [0.5 * i for i in range(30)])
+        music_dur  = (music_analysis or {}).get("duration", 30.0)
+        timeline   = build_timeline(beat_times, scored, music_dur, context["style"])
+        context["timeline"] = timeline
+
+        # Render
+        render_inputs = {
+            "timeline":   timeline,
+            "music_path": music,
+            "quality":    quality,
+        }
+        render_result = await self._render_timeline(render_inputs, context)
+
+        if not render_result.get("success"):
+            yield {"type": "error", "message": render_result.get("error", "Render başarısız")}
+            return
+
+        # QA
+        out_path = render_result["output_path"]
+        yield {"type": "progress", "step": "qa", "status": "running",
+               "message": "Kalite kontrol yapılıyor..."}
+        try:
+            qa_report = await self.qa.run(
+                out_path, music or "", timeline,
+                context["style"], music_analysis
+            )
+            context["qa_report"] = qa_report
+        except Exception as e:
+            logger.warning(f"QA hatası (render geçerli): {e}")
+            qa_report = {"final_score": None, "grade": "?", "pass": True,
+                         "error": str(e)}
+
+        result = {
+            "type":        "result",
+            "text":        f"{quality.upper()} render tamamlandı — {render_result.get('segments', 0)} sahne",
+            "output_path": out_path,
+            "timeline":    timeline,
+            "qa_score":    qa_report.get("final_score"),
+            "qa_grade":    qa_report.get("grade"),
+            "qa_pass":     qa_report.get("pass"),
+            "qa_report":   qa_report,
+        }
+        yield result
+
     async def _run_tool(self, name: str, inputs: dict, context: dict) -> dict:
         try:
             if name == "analyze_music":
-                return await self.music.analyze(inputs["file_path"])
+                result = await self.music.analyze(inputs["file_path"])
+                context["music_analysis"] = result
+                return result
 
             if name == "score_clips":
                 return await self.scorer.score(inputs["clip_paths"])
@@ -213,10 +376,57 @@ class ClaudeClient:
                 return {"timeline": tl, "segment_count": len(tl)}
 
             if name == "render_timeline":
-                return await self._render_timeline(inputs, context)
+                render_result = await self._render_timeline(inputs, context)
+                # Render başarılıysa QA çalıştır
+                if render_result.get("success"):
+                    out_path   = render_result["output_path"]
+                    music_path = inputs.get("music_path") or context["files"].get("music", "")
+                    timeline   = inputs.get("timeline") or context.get("timeline", [])
+                    yield_qa   = True
+                    try:
+                        qa_report = await self.qa.run(
+                            out_path, music_path, timeline,
+                            context.get("style", "dark"),
+                            context.get("music_analysis")
+                        )
+                        context["qa_report"] = qa_report
+                        render_result["qa_score"] = qa_report.get("final_score")
+                        render_result["qa_grade"] = qa_report.get("grade")
+                        render_result["qa_pass"]  = qa_report.get("pass")
+                    except Exception as e:
+                        logger.warning(f"QA hatası (render geçerli): {e}")
+                        render_result["qa_warning"] = str(e)
+                return render_result
 
             if name == "run_ffmpeg":
                 return await self._handle_ffmpeg(inputs, context)
+
+            if name == "apply_color_preset":
+                try:
+                    return await self.davinci.apply_color_preset(inputs["style"])
+                except Exception as e:
+                    return {"ok": False, "fallback": "DaVinci bağlı değil", "error": str(e)}
+
+            if name == "logo_reveal":
+                try:
+                    return await self.ae.logo_reveal(
+                        inputs["logo_path"],
+                        inputs.get("duration", 3.0),
+                        inputs.get("output_path")
+                    )
+                except Exception as e:
+                    return {"ok": False, "fallback": "After Effects bağlı değil", "error": str(e)}
+
+            if name == "add_text_overlay":
+                try:
+                    return await self.ae.add_text_overlay(
+                        inputs["title"],
+                        inputs.get("subtitle", ""),
+                        inputs.get("duration", 5.0),
+                        inputs.get("output_path")
+                    )
+                except Exception as e:
+                    return {"ok": False, "fallback": "After Effects bağlı değil", "error": str(e)}
 
             return {"error": f"Bilinmeyen araç: {name}"}
 
@@ -225,7 +435,6 @@ class ClaudeClient:
             return {"error": str(e)}
 
     async def _render_timeline(self, inputs: dict, context: dict) -> dict:
-        """Timeline segmentlerini trim+concat+müzik ile tek video'ya dönüştürür."""
         timeline   = inputs.get("timeline") or context.get("timeline")
         music_path = inputs.get("music_path") or context["files"].get("music")
         quality    = inputs.get("quality", "demo")
@@ -235,16 +444,17 @@ class ClaudeClient:
 
         project_id = context.get("project", f"proj_{int(time.time())}")
         seg_dir    = TEMP_DIR / project_id
-        seg_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            seg_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return {"error": f"Geçici klasör oluşturulamadı: {e}"}
 
-        # Adım 1: Her segmenti trim et
         trimmed = []
         for i, seg in enumerate(timeline):
             clip   = seg.get("clip_path", "")
             offset = float(seg.get("clip_offset", 0))
             dur    = float(seg.get("duration", 2))
             out    = str(seg_dir / f"seg_{i:04d}.mp4")
-
             cmd    = self.ffmpeg.trim_cmd(clip, offset, dur)
             result = await self.ffmpeg.run({"command": cmd, "output_path": out})
             if result["success"]:
@@ -255,7 +465,6 @@ class ClaudeClient:
         if not trimmed:
             return {"error": "Hiçbir segment trim edilemedi"}
 
-        # Adım 2: Concat
         list_path = str(seg_dir / "concat.txt")
         with open(list_path, "w", encoding="utf-8") as f:
             for p in trimmed:
@@ -267,7 +476,6 @@ class ClaudeClient:
         if not result["success"]:
             return {"error": f"Concat başarısız: {result.get('stderr_tail','')[:200]}"}
 
-        # Adım 3: Müzik ekle + render
         suffix  = f"_{int(time.time())}"
         out_dir = TEMP_DIR / "output"
         out_dir.mkdir(exist_ok=True)
@@ -275,7 +483,9 @@ class ClaudeClient:
         if quality == "final":
             out_path = str(out_dir / f"final{suffix}.mp4")
             if music_path:
+                # 4K scale her zaman uygulanır
                 cmd = (f'-i "{concat_out}" -i "{music_path}" '
+                       f'-vf scale=3840:2160 '
                        f'-map 0:v -map 1:a -c:v libx265 -crf 18 -preset slow '
                        f'-c:a aac -b:a 320k -shortest')
             else:
@@ -293,6 +503,9 @@ class ClaudeClient:
         result = await self.ffmpeg.run({"command": cmd, "output_path": out_path})
         if not result["success"]:
             return {"error": f"Render başarısız: {result.get('stderr_tail','')[:200]}"}
+
+        # Geçici segment dosyalarını temizle
+        shutil.rmtree(seg_dir, ignore_errors=True)
 
         context["last_output"] = out_path
         logger.info(f"Render tamamlandı: {out_path}")
@@ -326,10 +539,10 @@ class ClaudeClient:
         return await self.ffmpeg.run({"command": cmd, "output_path": out})
 
     def _auto_path(self, op: str) -> str:
-        ts  = int(time.time())
+        uid = uuid.uuid4().hex[:8]
         out = TEMP_DIR / "output"
         out.mkdir(exist_ok=True)
-        return str(out / f"{op}_{ts}.mp4")
+        return str(out / f"{op}_{uid}.mp4")
 
     def _build_prompt(self, data: dict) -> str:
         files = data.get("files", {})

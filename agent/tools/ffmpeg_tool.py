@@ -56,6 +56,8 @@ class FFmpegTool:
         }
 
     def trim_cmd(self, input_path: str, start: float, duration: float) -> str:
+        start    = max(0.0, float(start))
+        duration = max(0.1, float(duration))
         return f'-i "{input_path}" -ss {start:.3f} -t {duration:.3f} -c copy'
 
     def concat_cmd(self, filelist_path: str) -> str:
