@@ -83,6 +83,89 @@ async def health():
     return {"status": "ok", "connected_clients": len(connected_clients),
             "version": "1.0.0"}
 
+# ── Müzik İndirme ────────────────────────────────────────────────────────────
+
+@app.post("/music/info")
+async def music_info(data: dict):
+    """URL'den parça bilgisi al (başlık, süre) — indirme yapmaz."""
+    url = data.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url gerekli")
+    from agent.tools.music_downloader import get_info
+    return await get_info(url)
+
+
+@app.post("/music/download")
+async def music_download(data: dict):
+    """YouTube veya Spotify URL'sinden müzik indir."""
+    url = data.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url gerekli")
+    from agent.tools.music_downloader import download_music
+    result = await download_music(url)
+    return result
+
+
+# ── DaVinci Status ───────────────────────────────────────────────────────────
+
+@app.post("/davinci/autostart")
+async def davinci_autostart():
+    """DaVinci Resolve'u otomatik başlatır ve bridge'i kurar."""
+    from agent.tools.resolve_launcher import ResolveLauncher
+    launcher = ResolveLauncher()
+
+    # Zaten hazır mı?
+    if await launcher._ping_bridge(timeout_s=2):
+        return {"ok": True, "message": "Bridge zaten hazır"}
+
+    # Resolve'u başlat ve bridge'i kur
+    ok = await launcher.ensure_ready(timeout=45)
+    if ok:
+        return {"ok": True, "message": "DaVinci Resolve başlatıldı ve bridge kuruldu"}
+    return {"ok": False, "message": "Otomatik başlatma başarısız — lütfen Resolve'u elle açın"}
+
+
+@app.get("/davinci/status")
+async def davinci_status():
+    """DaVinci Resolve açık mı ve bridge bağlı mı kontrol eder."""
+    import psutil, json as _json, time as _time
+
+    # 1. Resolve.exe çalışıyor mu?
+    resolve_running = any(
+        "Resolve" in (p.name() or "")
+        for p in psutil.process_iter(["name"])
+    )
+
+    # 2. Bridge bağlı mı? (hızlı ping: 2s timeout)
+    bridge_active = False
+    if resolve_running:
+        cmd_f = TEMP_DIR / "resolve_cmd.json"
+        res_f = TEMP_DIR / "resolve_result.json"
+        try:
+            res_f.unlink(missing_ok=True)
+            cmd_f.write_text(_json.dumps({"op": "check"}), encoding="utf-8")
+            deadline = _time.time() + 2
+            while _time.time() < deadline:
+                await asyncio.sleep(0.2)
+                if res_f.exists():
+                    result = _json.loads(res_f.read_text(encoding="utf-8"))
+                    bridge_active = result.get("ok", False)
+                    res_f.unlink(missing_ok=True)
+                    break
+        except Exception:
+            pass
+        finally:
+            cmd_f.unlink(missing_ok=True)
+
+    bridge_script = r"D:\Users\Hakan\Desktop\Proje\Ai_Edit\agent\tools\resolve_bridge.py"
+    console_cmd   = f'exec(open(r"{bridge_script}").read())'
+
+    return {
+        "resolve_running": resolve_running,
+        "bridge_active":   bridge_active,
+        "console_cmd":     console_cmd,
+    }
+
 # ── Projects ──────────────────────────────────────────────────────────────────
 
 @app.get("/projects")

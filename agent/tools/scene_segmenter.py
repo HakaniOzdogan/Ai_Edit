@@ -6,8 +6,14 @@ import asyncio
 import logging
 from pathlib import Path
 
-import cv2
-import numpy as np
+_cv2 = None
+_np  = None
+
+def _load_libs():
+    global _cv2, _np
+    if _cv2 is None:
+        import cv2 as c; import numpy as n
+        _cv2 = c; _np = n
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +30,8 @@ class SceneSegmenter:
         return await asyncio.to_thread(self._segment_sync, video_path, threshold)
 
     def _segment_sync(self, video_path: str, threshold: float) -> list[dict]:
+        _load_libs()
+        cv2 = _cv2
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             return []

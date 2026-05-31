@@ -14,8 +14,14 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import cv2
-import numpy as np
+_cv2 = None
+_np  = None
+
+def _load_cv2():
+    global _cv2, _np
+    if _cv2 is None:
+        import cv2 as c; import numpy as n
+        _cv2 = c; _np = n
 
 from agent.models.profile import BrandProfile
 
@@ -131,6 +137,8 @@ class ReferenceAnalyzer:
             duration = 30.0
 
         # Sahne tespiti (histogram farkı)
+        _load_cv2()
+        cv2 = _cv2
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         step = max(1, int(fps))
@@ -156,6 +164,8 @@ class ReferenceAnalyzer:
 
     def _get_color_tone(self, video_path: str) -> str:
         """Ortalama renk tonunu analiz eder: warm | cool | neutral."""
+        _load_cv2()
+        cv2, np = _cv2, _np
         cap = cv2.VideoCapture(video_path)
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         step  = max(1, total // 10)

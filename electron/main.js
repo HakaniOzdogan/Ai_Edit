@@ -67,6 +67,12 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
 
+  // Renderer console mesajlarini ana process'e yonlendir
+  mainWindow.webContents.on('console-message', (e, level, msg, line, src) => {
+    const lvl = ['V','I','W','E'][level] || '?'
+    console.log(`[renderer:${lvl}] ${msg}`)
+  })
+
   if (!app.isPackaged) {
     mainWindow.webContents.openDevTools()
   }
@@ -74,24 +80,36 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null })
 }
 
-async function waitForAgent(maxMs = 25000) {
+async function waitForAgent(maxMs = 40000) {
   const start = Date.now()
+  let attempt = 0
   while (Date.now() - start < maxMs) {
+    attempt++
     try {
-      const res = await fetch('http://localhost:8765/health')
-      if (res.ok) return true
+      const res = await fetch('http://localhost:8765/health', { signal: AbortSignal.timeout(1500) })
+      if (res.ok) {
+        console.log(`[main] Agent hazır (${attempt}. denemede, ${Math.round((Date.now()-start)/1000)}sn)`)
+        return true
+      }
     } catch {}
     await new Promise(r => setTimeout(r, 500))
   }
+  console.warn(`[main] Agent ${maxMs/1000}sn içinde yanıt vermedi`)
   return false
 }
 
 // ── Uygulama Yaşam Döngüsü ────────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  startAgent()
-  console.log('[main] Agent hazır olana kadar bekleniyor...')
-  const ready = await waitForAgent()
-  if (!ready) console.warn('[main] Agent 25sn içinde hazır olmadı, devam ediliyor')
+  // Agent zaten calisiyor mu? (start.ps1 onceden baslattiysa tekrar baslat ma)
+  const alreadyRunning = await waitForAgent(2000)
+  if (alreadyRunning) {
+    console.log('[main] Agent zaten calisiyor, yeniden baslatilmiyor')
+  } else {
+    startAgent()
+    console.log('[main] Agent bekleniyor (max 40sn)...')
+    const ready = await waitForAgent(40000)
+    if (!ready) console.warn('[main] Agent baslamadi, pencere yine de aciliyor')
+  }
   createWindow()
 })
 
