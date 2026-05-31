@@ -12,6 +12,7 @@ from agent.tools.ffmpeg_tool import FFmpegTool
 from agent.tools.auto_editor import build_timeline, write_concat_list
 from agent.tools.davinci_tool import DaVinciTool
 from agent.tools.aftereffects_tool import AfterEffectsTool
+from agent.tools.premiere_tool import PremiereTool
 from agent.qa.orchestrator import QAOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -19,144 +20,234 @@ logger = logging.getLogger(__name__)
 TEMP_DIR = Path(os.getenv("TEMP_DIR", "./temp")).resolve()
 
 SYSTEM_PROMPT = """
-Sen AI Video Editor sisteminin karar motorusun.
-Kullanıcı sana ham video/fotoğraf ve müzik atar;
-sen analiz ederek profesyonel bir kurgu oluşturursun.
+Sen bir AI video prodüksiyon uzmanısın. Kullanıcının ham medyasını (video, fotoğraf, müzik, logo)
+alıp profesyonel bir şekilde kurgulayıp render eden tam donanımlı bir sistemsin.
 
-ARAÇLARIN:
-- analyze_music   : Müzik BPM, beat ve drop tespiti
-- score_clips     : Video klip kalite skorlaması
-- build_timeline  : Beat-sync otomatik kurgu oluşturma
-- render_timeline : Timeline'ı FFmpeg ile demo videoya dönüştürür (trim + concat + müzik)
-- run_ffmpeg      : Tekil FFmpeg işlemi (trim, concat, final render)
+Her uygulamanın özel rolü var. Hepsi otomatik başlar, sen sadece doğru araçları çağır:
 
-KURGU AKIŞI (BU SIRAYA UYGUN ÇALIŞTIRILMALI):
-1. analyze_music  → BPM ve beat zamanlarını al
-2. score_clips    → Klipleri puanla
-3. build_timeline → Beat-sync kurgu oluştur
-4. render_timeline → Demo video üret (timeline + müzik birleşik render)
-5. Son adımda kullanıcıya sonucu özetle
+━━━ GÖREV DAĞILIMI ━━━
+
+🔧 FFmpeg — Omurga (her zaman çalışır)
+  • analyze için hazırlık, trim, concat, demo render, ses normalize
+  • Temel renk/geçiş (DaVinci/AE yoksa fallback)
+
+🎨 DaVinci Resolve — Renk Uzmanı (bridge aktifse kullan, yoksa FFmpeg fallback)
+  • color_grade  → Profesyonel renk düzeltme (node-based, LUT)
+  • apply_lut    → .cube LUT dosyası uygulama
+  • Render sonrası video üzerine çalışır
+
+✨ After Effects — Animasyon Uzmanı (otomatik başlar)
+  • add_logo     → Logo reveal animasyonu (JSX → aerender headless)
+  • add_text     → Animasyonlu başlık/alt başlık (lower third)
+  • add_transition → Flash, glitch, ışık geçişi efektleri
+  • Render sonrası video üzerine çalışır
+
+🎬 Premiere Pro — Final Uzmanı (otomatik başlar, PProHeadless)
+  • premiere_export → Final 4K export (Adobe presetleri, Lumetri, ses mixer)
+  • Tüm işlemler bittikten sonra son adım olarak çalışır
+
+━━━ ARAÇLAR ━━━
+ANALİZ: analyze_music, score_clips
+KURGU:  build_timeline, render_timeline
+RENK:   color_grade (DaVinci→FFmpeg), apply_lut (DaVinci→FFmpeg)
+GRAFİK: add_logo (AE→FFmpeg), add_text (AE→FFmpeg), add_transition (FFmpeg xfade)
+SES:    normalize_audio, add_music
+FİNAL:  premiere_export (Premiere→FFmpeg fallback)
+
+━━━ TAM AKIŞ ━━━
+1. analyze_music + score_clips  (paralel)
+2. build_timeline
+3. render_timeline              (FFmpeg — hızlı)
+4. color_grade                  (DaVinci veya FFmpeg)
+5. add_logo + add_text          (After Effects veya FFmpeg)
+6. premiere_export              (Premiere Pro veya FFmpeg 4K)
 
 TARZ TANIMLARI:
-- dark : 4 beat/sahne, cool ton, dramatik
-- fast : 1 beat/sahne, high contrast
-- corp : 2 beat/sahne, clean, nötr
-- warm : 3 beat/sahne, warm ton, soft
+dark → 4 beat/sahne · cool ton · dramatik · hard_cut geçiş
+fast → 1 beat/sahne · yüksek kontrast · enerji · whip_pan geçiş
+warm → 3 beat/sahne · sıcak ton · soft · dissolve geçiş
+corp → 2 beat/sahne · nötr · temiz · fade geçiş
 
-YANIT KURALLARI:
-- Her tool çağrısından önce ne yapacağını 1 cümle belirt
-- İşlem sonucunu özetle (BPM, sahne sayısı, süre)
-- Hata olursa açıkça belirt
-- Türkçe yanıt ver
-- Maksimum 6 tool çağrısı yap
+KURALLAR:
+• Araç başarısız → fallback devreye girer, DUR MA, devam et
+• render_timeline'dan sonra color_grade, add_logo, add_text, premiere_export
+• Türkçe yanıt, kısa ve öz
+• Maksimum 12 tool çağrısı
 """
 
 TOOLS = [
+    # ── Analiz ──────────────────────────────────────────────────────────────
     {
         "name": "analyze_music",
-        "description": "Müzik dosyasını analiz eder. BPM, beat zamanları, drop noktaları döner.",
+        "description": "Müzik BPM, beat zamanları, drop noktaları, toplam süre.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "file_path": {"type": "string", "description": "Müzik dosyasının tam yolu"}
+                "file_path": {"type": "string"}
             },
             "required": ["file_path"]
         }
     },
     {
         "name": "score_clips",
-        "description": "Video kliplerini kalite açısından puanlar.",
+        "description": "Video kliplerini parlaklık, keskinlik ve hareket skoruna göre sıralar.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "clip_paths": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Video dosyalarının tam yolları"
-                }
+                "clip_paths": {"type": "array", "items": {"type": "string"}}
             },
             "required": ["clip_paths"]
         }
     },
+    # ── Kurgu ───────────────────────────────────────────────────────────────
     {
         "name": "build_timeline",
-        "description": "Beat analizine göre otomatik kurgu timeline oluşturur. Segment listesi döner.",
+        "description": "Beat zamanları ve klip skorlarından beat-sync kurgu timeline üretir.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "beat_times":     {"type": "array", "items": {"type": "number"}},
                 "scored_clips":   {"type": "array"},
                 "music_duration": {"type": "number"},
-                "style":          {"type": "string", "enum": ["dark", "fast", "warm", "corp"]}
+                "style":          {"type": "string", "enum": ["dark","fast","warm","corp"]}
             },
-            "required": ["beat_times", "scored_clips", "music_duration"]
+            "required": ["beat_times","scored_clips","music_duration"]
         }
     },
     {
         "name": "render_timeline",
-        "description": "Timeline segmentlerini trim+concat+müzik ile demo videoya dönüştürür. En son adımda çalıştırılmalı.",
+        "description": "Timeline segmentlerini trim+concat+müzik ile birleşik videoya render eder.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "timeline":    {"type": "array",  "description": "build_timeline çıktısı"},
-                "music_path":  {"type": "string", "description": "Müzik dosyası tam yolu (opsiyonel)"},
-                "output_path": {"type": "string", "description": "Çıktı video yolu (opsiyonel, otomatik üretilir)"},
-                "quality":     {"type": "string", "enum": ["demo", "final"], "description": "demo=hızlı preview, final=4K H.265"}
+                "timeline":    {"type": "array"},
+                "music_path":  {"type": "string"},
+                "quality":     {"type": "string", "enum": ["demo","final"]},
+                "output_path": {"type": "string"}
             },
             "required": ["timeline"]
         }
     },
+    # ── Renk Grading ────────────────────────────────────────────────────────
     {
-        "name": "run_ffmpeg",
-        "description": "Tekil FFmpeg işlemi: trim, concat veya final render.",
+        "name": "color_grade",
+        "description": "Tarz bazlı renk düzeltmesi (dark/warm/corp/fast). FFmpeg natif — hiçbir dış program gerekmez.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "operation":   {"type": "string", "enum": ["trim", "concat", "demo_render", "final_render"]},
+                "input_path":  {"type": "string", "description": "Render edilmiş video yolu"},
+                "style":       {"type": "string", "enum": ["dark","warm","corp","fast","natural"]},
+                "output_path": {"type": "string"}
+            },
+            "required": ["input_path","style"]
+        }
+    },
+    {
+        "name": "apply_lut",
+        "description": ".cube LUT dosyasını videoya uygular. FFmpeg natif.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
                 "input_path":  {"type": "string"},
-                "output_path": {"type": "string"},
-                "params":      {"type": "object"}
+                "lut_path":    {"type": "string", "description": ".cube dosyasının tam yolu"},
+                "output_path": {"type": "string"}
             },
-            "required": ["operation", "output_path"]
+            "required": ["input_path","lut_path"]
         }
     },
+    # ── Grafik / Overlay ─────────────────────────────────────────────────────
     {
-        "name": "apply_color_preset",
-        "description": "DaVinci Resolve'da tarz bazlı LUT uygular. Resolve açık ve bridge hazır olmalı.",
+        "name": "add_logo",
+        "description": "Video üzerine logo overlay + fade-in animasyonu ekler. FFmpeg natif — After Effects gerekmez.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "style": {"type": "string", "enum": ["dark", "warm", "corp", "fast"],
-                          "description": "Uygulanacak renk tarzı"}
+                "input_path":  {"type": "string"},
+                "logo_path":   {"type": "string", "description": "PNG logo dosyası"},
+                "position":    {"type": "string", "enum": ["bottom-right","bottom-left","top-right","top-left","center"]},
+                "fade_in":     {"type": "number", "description": "Fade-in süresi (saniye, varsayılan 0.8)"},
+                "output_path": {"type": "string"}
             },
-            "required": ["style"]
+            "required": ["input_path","logo_path"]
         }
     },
     {
-        "name": "logo_reveal",
-        "description": "After Effects ile logo reveal animasyonu üretir ve MP4 olarak kaydeder.",
+        "name": "add_text",
+        "description": "Video üzerine başlık + alt başlık metin overlay ekler. FFmpeg natif — After Effects gerekmez.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "logo_path": {"type": "string", "description": "Logo dosyasının tam yolu (PNG/SVG)"},
-                "duration":  {"type": "number", "description": "Animasyon süresi (saniye, varsayılan 3)"},
-                "output_path": {"type": "string", "description": "Çıktı MP4 yolu (opsiyonel)"}
+                "input_path":  {"type": "string"},
+                "title":       {"type": "string"},
+                "subtitle":    {"type": "string"},
+                "position":    {"type": "string", "enum": ["bottom","top"]},
+                "fade_in":     {"type": "number"},
+                "output_path": {"type": "string"}
             },
-            "required": ["logo_path"]
+            "required": ["input_path","title"]
         }
     },
     {
-        "name": "add_text_overlay",
-        "description": "After Effects ile lower third metin overlay'i üretir.",
+        "name": "add_transition",
+        "description": "İki klip arasına geçiş efekti ekler (fade/dissolve/wipeleft/wiperight/circleclose vb.). FFmpeg xfade.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "title":    {"type": "string", "description": "Ana başlık metni"},
-                "subtitle": {"type": "string", "description": "Alt başlık metni (opsiyonel)"},
-                "duration": {"type": "number", "description": "Görünme süresi (saniye)"},
-                "output_path": {"type": "string", "description": "Çıktı MP4 yolu (opsiyonel)"}
+                "clip1":       {"type": "string"},
+                "clip2":       {"type": "string"},
+                "transition":  {"type": "string", "description": "fade|dissolve|wipeleft|wiperight|slideleft|slideright|circleclose|radial|pixelize"},
+                "duration":    {"type": "number", "description": "Geçiş süresi saniye (varsayılan 0.5)"},
+                "output_path": {"type": "string"}
             },
-            "required": ["title"]
+            "required": ["clip1","clip2"]
+        }
+    },
+    # ── Ses ─────────────────────────────────────────────────────────────────
+    {
+        "name": "normalize_audio",
+        "description": "Video sesini EBU R128 standardına normalize eder.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "input_path":  {"type": "string"},
+                "output_path": {"type": "string"}
+            },
+            "required": ["input_path"]
+        }
+    },
+    {
+        "name": "add_music",
+        "description": "Müziği videoya ekler, orijinal video sesini arka planda karıştırır.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "video_path":  {"type": "string"},
+                "music_path":  {"type": "string"},
+                "video_vol":   {"type": "number", "description": "Video ses seviyesi 0-1 (varsayılan 0.3)"},
+                "music_vol":   {"type": "number", "description": "Müzik ses seviyesi 0-1 (varsayılan 1.0)"},
+                "output_path": {"type": "string"}
+            },
+            "required": ["video_path","music_path"]
+        }
+    },
+    # ── Final Export ─────────────────────────────────────────────────────────
+    {
+        "name": "premiere_export",
+        "description": (
+            "Premiere Pro ile profesyonel final export yapar (Lumetri renk, ses mixer, Adobe presetleri). "
+            "Premiere başlatılamıyorsa FFmpeg 4K H.265 ile fallback. "
+            "TÜM color_grade/add_logo/add_text işlemleri bittikten SONRA çağrılır."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "input_path":     {"type": "string", "description": "Render edilmiş video"},
+                "output_path":    {"type": "string", "description": "Çıktı yolu (opsiyonel)"},
+                "preset":         {"type": "string", "description": "H.264|H.265|ProRes (varsayılan H.265)"},
+                "resolution":     {"type": "string", "description": "1080p|4K (varsayılan 4K)"},
+                "lumetri_style":  {"type": "string", "description": "dark|warm|corp|fast (Lumetri renk profili)"}
+            },
+            "required": ["input_path"]
         }
     }
 ]
@@ -171,13 +262,14 @@ class ClaudeClient:
                 "ANTHROPIC_API_KEY eksik — .env dosyasını kontrol et\n"
                 "Örnek: ANTHROPIC_API_KEY=sk-ant-..."
             )
-        self.client  = anthropic.Anthropic(api_key=api_key)
-        self.music   = MusicAnalyzer()
-        self.scorer  = ClipScorer()
-        self.ffmpeg  = FFmpegTool()
-        self.davinci = DaVinciTool()
-        self.ae      = AfterEffectsTool()
-        self.qa      = QAOrchestrator()
+        self.client   = anthropic.Anthropic(api_key=api_key)
+        self.music    = MusicAnalyzer()
+        self.scorer   = ClipScorer()
+        self.ffmpeg   = FFmpegTool()
+        self.davinci  = DaVinciTool()
+        self.ae       = AfterEffectsTool()
+        self.premiere = PremiereTool()
+        self.qa       = QAOrchestrator()
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     async def process(self, data: dict):
@@ -401,32 +493,166 @@ class ClaudeClient:
             if name == "run_ffmpeg":
                 return await self._handle_ffmpeg(inputs, context)
 
-            if name == "apply_color_preset":
+            # ── Renk Grading: DaVinci önce, FFmpeg fallback ──────────────────
+            if name == "color_grade":
+                inp   = inputs["input_path"]
+                style = inputs.get("style", "dark")
+                out   = inputs.get("output_path")
+                # DaVinci bridge aktifse önce dene
                 try:
-                    return await self.davinci.apply_color_preset(inputs["style"])
-                except Exception as e:
-                    return {"ok": False, "fallback": "DaVinci bağlı değil", "error": str(e)}
+                    dv_result = await self.davinci.apply_color_preset(style)
+                    if dv_result.get("ok"):
+                        logger.info("color_grade: DaVinci Resolve kullanıldı")
+                        dv_result["engine"] = "davinci"
+                        return dv_result
+                except Exception:
+                    pass
+                # Fallback: FFmpeg
+                result = await self.ffmpeg.apply_color_grade(inp, style, out)
+                result["engine"] = "ffmpeg"
+                if result.get("success"):
+                    context["last_output"] = result["output_path"]
+                return result
 
-            if name == "logo_reveal":
+            if name == "apply_lut":
+                inp      = inputs["input_path"]
+                lut_path = inputs["lut_path"]
+                out      = inputs.get("output_path")
+                # DaVinci LUT uygulama
                 try:
-                    return await self.ae.logo_reveal(
-                        inputs["logo_path"],
-                        inputs.get("duration", 3.0),
-                        inputs.get("output_path")
-                    )
-                except Exception as e:
-                    return {"ok": False, "fallback": "After Effects bağlı değil", "error": str(e)}
+                    dv_result = await self.davinci.apply_lut(lut_path)
+                    if dv_result.get("ok"):
+                        logger.info("apply_lut: DaVinci Resolve kullanıldı")
+                        dv_result["engine"] = "davinci"
+                        return dv_result
+                except Exception:
+                    pass
+                # Fallback: FFmpeg lut3d
+                result = await self.ffmpeg.apply_lut(inp, lut_path, out)
+                result["engine"] = "ffmpeg"
+                if result.get("success"):
+                    context["last_output"] = result["output_path"]
+                return result
 
-            if name == "add_text_overlay":
+            # ── Grafik/Overlay: After Effects önce, FFmpeg fallback ───────────
+            if name == "add_logo":
+                inp      = inputs["input_path"]
+                logo     = inputs["logo_path"]
+                out      = inputs.get("output_path")
+                duration = inputs.get("fade_in", 3.0)
+                # After Effects logo reveal
                 try:
-                    return await self.ae.add_text_overlay(
-                        inputs["title"],
-                        inputs.get("subtitle", ""),
-                        inputs.get("duration", 5.0),
-                        inputs.get("output_path")
+                    ae_result = await self.ae.logo_reveal(logo, duration, out)
+                    if ae_result.get("ok") and ae_result.get("output_path"):
+                        logger.info("add_logo: After Effects kullanıldı")
+                        ae_result["engine"] = "after_effects"
+                        context["last_output"] = ae_result["output_path"]
+                        return ae_result
+                except Exception:
+                    pass
+                # Fallback: FFmpeg overlay
+                result = await self.ffmpeg.add_logo(
+                    inp, logo,
+                    inputs.get("position", "bottom-right"),
+                    inputs.get("fade_in", 0.8), out
+                )
+                result["engine"] = "ffmpeg"
+                if result.get("success"):
+                    context["last_output"] = result["output_path"]
+                return result
+
+            if name == "add_text":
+                inp      = inputs["input_path"]
+                title    = inputs["title"]
+                subtitle = inputs.get("subtitle", "")
+                out      = inputs.get("output_path")
+                duration = inputs.get("duration", 5.0)
+                # After Effects text overlay
+                try:
+                    ae_result = await self.ae.add_text_overlay(title, subtitle, duration, out)
+                    if ae_result.get("ok") and ae_result.get("output_path"):
+                        logger.info("add_text: After Effects kullanıldı")
+                        ae_result["engine"] = "after_effects"
+                        context["last_output"] = ae_result["output_path"]
+                        return ae_result
+                except Exception:
+                    pass
+                # Fallback: FFmpeg drawtext
+                result = await self.ffmpeg.add_text(
+                    inp, title, subtitle,
+                    inputs.get("position", "bottom"),
+                    inputs.get("fade_in", 0.5),
+                    output_path=out
+                )
+                result["engine"] = "ffmpeg"
+                if result.get("success"):
+                    context["last_output"] = result["output_path"]
+                return result
+
+            if name == "add_transition":
+                result = await self.ffmpeg.add_transition(
+                    inputs["clip1"], inputs["clip2"],
+                    inputs.get("transition", "fade"),
+                    inputs.get("duration", 0.5),
+                    inputs.get("output_path")
+                )
+                if result.get("success"):
+                    context["last_output"] = result["output_path"]
+                return result
+
+            # ── Ses ──────────────────────────────────────────────────────────
+            if name == "normalize_audio":
+                result = await self.ffmpeg.normalize_audio(
+                    inputs["input_path"], inputs.get("output_path")
+                )
+                if result.get("success"):
+                    context["last_output"] = result["output_path"]
+                return result
+
+            if name == "add_music":
+                result = await self.ffmpeg.add_music(
+                    inputs["video_path"], inputs["music_path"],
+                    inputs.get("output_path"),
+                    inputs.get("video_vol", 0.3),
+                    inputs.get("music_vol", 1.0)
+                )
+                if result.get("success"):
+                    context["last_output"] = result["output_path"]
+                return result
+
+            # ── Premiere Pro Final Export ─────────────────────────────────────
+            if name == "premiere_export":
+                inp       = inputs["input_path"]
+                out       = inputs.get("output_path") or self._auto_path("final_premiere")
+                preset    = inputs.get("preset", "H.265")
+                res       = inputs.get("resolution", "4K")
+                lum_style = inputs.get("lumetri_style")
+
+                # Premiere Pro headless export
+                try:
+                    prj_path = str(TEMP_DIR / f"pp_{uuid.uuid4().hex[:8]}.prproj")
+                    # Klipleri import et ve sekans oluştur
+                    pp_result = await self.premiere.export_sequence(
+                        prj_path, "AI_Edit_Sequence", out, preset
                     )
+                    if pp_result.get("ok") and pp_result.get("output_path"):
+                        logger.info("premiere_export: Premiere Pro kullanıldı")
+                        pp_result["engine"] = "premiere"
+                        context["last_output"] = pp_result["output_path"]
+                        return pp_result
                 except Exception as e:
-                    return {"ok": False, "fallback": "After Effects bağlı değil", "error": str(e)}
+                    logger.warning(f"Premiere Pro export başarısız, FFmpeg fallback: {e}")
+
+                # Fallback: FFmpeg 4K H.265
+                if res == "4K":
+                    cmd = self.ffmpeg.render_4k_cmd(inp)
+                else:
+                    cmd = self.ffmpeg.render_cmd(inp, "1920x1080")
+                result = await self.ffmpeg.run({"command": cmd, "output_path": out})
+                result["engine"] = "ffmpeg"
+                if result.get("success"):
+                    context["last_output"] = out
+                return result
 
             return {"error": f"Bilinmeyen araç: {name}"}
 
@@ -438,9 +664,25 @@ class ClaudeClient:
         timeline   = inputs.get("timeline") or context.get("timeline")
         music_path = inputs.get("music_path") or context["files"].get("music")
         quality    = inputs.get("quality", "demo")
+        # Hedef video süresi — 20dk müzik yüklenince 30dk video üretilmesini önler
+        target_duration = inputs.get("target_duration") or context.get("target_duration", 90.0)
 
         if not timeline:
             return {"error": "Timeline boş — önce build_timeline çalıştır"}
+
+        # Süre limiti uygula: target_duration saniyeyi geçen segmentleri kes
+        total_so_far = 0.0
+        limited_timeline = []
+        for seg in timeline:
+            dur = float(seg.get("duration", 2))
+            if total_so_far + dur > target_duration:
+                break
+            limited_timeline.append(seg)
+            total_so_far += dur
+        if not limited_timeline:
+            limited_timeline = timeline[:30]  # en az 30 segment al
+
+        logger.info(f"Timeline: {len(timeline)} → {len(limited_timeline)} sahne ({total_so_far:.1f}s, limit: {target_duration}s)")
 
         project_id = context.get("project", f"proj_{int(time.time())}")
         seg_dir    = TEMP_DIR / project_id
@@ -449,41 +691,48 @@ class ClaudeClient:
         except OSError as e:
             return {"error": f"Geçici klasör oluşturulamadı: {e}"}
 
+        # Her segmenti trim et
+        # clip_offset: klip süresiyle orantılı akıllı offset
         trimmed = []
-        for i, seg in enumerate(timeline):
-            clip   = seg.get("clip_path", "")
-            offset = float(seg.get("clip_offset", 0))
-            dur    = float(seg.get("duration", 2))
-            out    = str(seg_dir / f"seg_{i:04d}.mp4")
-            cmd    = self.ffmpeg.trim_cmd(clip, offset, dur)
+        for i, seg in enumerate(limited_timeline):
+            clip       = seg.get("clip_path", "")
+            seg_dur    = float(seg.get("duration", 2))
+            transition = seg.get("transition", "hard_cut")
+
+            # Klip süresini ölç ve akıllı offset hesapla
+            clip_total_dur = self.ffmpeg.get_duration(clip)
+            if clip_total_dur > 0 and clip_total_dur > seg_dur:
+                # Klibin ortasından rastgele başla (başından değil)
+                import random
+                max_offset = max(0.0, clip_total_dur - seg_dur - 0.5)
+                offset = round(random.uniform(0.0, min(max_offset, clip_total_dur * 0.7)), 3)
+            else:
+                offset = 0.0
+
+            out = str(seg_dir / f"seg_{i:04d}.mp4")
+            cmd = self.ffmpeg.trim_cmd(clip, offset, seg_dur)
             result = await self.ffmpeg.run({"command": cmd, "output_path": out})
             if result["success"]:
-                trimmed.append(out)
+                trimmed.append({"path": out, "transition": transition})
             else:
-                logger.warning(f"Segment {i} trim başarısız: {result.get('stderr_tail','')[:100]}")
+                logger.warning(f"Segment {i} trim başarısız")
 
         if not trimmed:
             return {"error": "Hiçbir segment trim edilemedi"}
 
-        list_path = str(seg_dir / "concat.txt")
-        with open(list_path, "w", encoding="utf-8") as f:
-            for p in trimmed:
-                f.write(f"file '{p}'\n")
+        # Geçiş efektleri uygula (tarz bazlı)
+        style = context.get("style", "dark")
+        concat_out = await self._apply_transitions(trimmed, seg_dir, style)
+        if not concat_out:
+            return {"error": "Geçiş uygulaması başarısız"}
 
-        concat_out = str(seg_dir / "concat.mp4")
-        cmd        = self.ffmpeg.concat_cmd(list_path)
-        result     = await self.ffmpeg.run({"command": cmd, "output_path": concat_out})
-        if not result["success"]:
-            return {"error": f"Concat başarısız: {result.get('stderr_tail','')[:200]}"}
-
-        suffix  = f"_{int(time.time())}"
+        suffix  = f"_{uuid.uuid4().hex[:6]}"
         out_dir = TEMP_DIR / "output"
         out_dir.mkdir(exist_ok=True)
 
         if quality == "final":
             out_path = str(out_dir / f"final{suffix}.mp4")
             if music_path:
-                # 4K scale her zaman uygulanır
                 cmd = (f'-i "{concat_out}" -i "{music_path}" '
                        f'-vf scale=3840:2160 '
                        f'-map 0:v -map 1:a -c:v libx265 -crf 18 -preset slow '
@@ -516,6 +765,71 @@ class ClaudeClient:
             "quality":     quality,
             "music":       bool(music_path)
         }
+
+    async def _apply_transitions(self, trimmed: list, seg_dir, style: str) -> str | None:
+        """
+        Trim edilmiş segmentleri geçiş efektleriyle birleştirir.
+        - hard_cut  → direkt concat (en hızlı)
+        - dissolve  → xfade fade geçiş
+        - whip_pan  → xfade wipeleft geçiş
+        Geçiş eklenemezse basit concat'a düşer.
+        """
+        # Tarz → geçiş türü eşlemesi
+        STYLE_TRANS = {
+            "dark": "hard_cut",
+            "corp": "hard_cut",
+            "warm": "dissolve",
+            "fast": "wipeleft",
+        }
+        transition_type = STYLE_TRANS.get(style, "hard_cut")
+
+        paths = [s["path"] for s in trimmed]
+
+        # hard_cut: basit concat — en hızlı ve güvenilir
+        if transition_type == "hard_cut" or len(paths) < 2:
+            list_path = str(seg_dir / "concat.txt")
+            with open(list_path, "w", encoding="utf-8") as f:
+                for p in paths:
+                    f.write(f"file '{p}'\n")
+            out = str(seg_dir / "concat.mp4")
+            result = await self.ffmpeg.run({"command": self.ffmpeg.concat_cmd(list_path),
+                                             "output_path": out})
+            return out if result["success"] else None
+
+        # dissolve/wipeleft: xfade ile ikili birleştirme
+        xfade_map = {"dissolve": "fade", "wipeleft": "wipeleft"}
+        xfade_type = xfade_map.get(transition_type, "fade")
+
+        try:
+            current = paths[0]
+            for i, next_clip in enumerate(paths[1:], 1):
+                merged = str(seg_dir / f"merged_{i:04d}.mp4")
+                result = await self.ffmpeg.add_transition(
+                    current, next_clip, xfade_type, 0.4, merged
+                )
+                if result.get("success"):
+                    current = merged
+                else:
+                    # Bu geçiş başarısız → direkt ekle
+                    tmp_list = str(seg_dir / f"tmp_concat_{i}.txt")
+                    with open(tmp_list, "w") as f:
+                        f.write(f"file '{current}'\nfile '{next_clip}'\n")
+                    tmp_out = str(seg_dir / f"tmp_merged_{i}.mp4")
+                    await self.ffmpeg.run({"command": self.ffmpeg.concat_cmd(tmp_list),
+                                           "output_path": tmp_out})
+                    current = tmp_out
+            return current
+        except Exception as e:
+            logger.warning(f"Geçiş efekti başarısız, concat fallback: {e}")
+            # Fallback: basit concat
+            list_path = str(seg_dir / "concat_fallback.txt")
+            with open(list_path, "w", encoding="utf-8") as f:
+                for p in paths:
+                    f.write(f"file '{p}'\n")
+            out = str(seg_dir / "concat.mp4")
+            result = await self.ffmpeg.run({"command": self.ffmpeg.concat_cmd(list_path),
+                                             "output_path": out})
+            return out if result["success"] else None
 
     async def _handle_ffmpeg(self, inputs: dict, context: dict) -> dict:
         op  = inputs["operation"]

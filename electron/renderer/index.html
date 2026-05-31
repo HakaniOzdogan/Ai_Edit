@@ -9,89 +9,184 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
+<!-- ══════════════ ANA EKRAN ══════════════ -->
+<div id="home-screen">
+  <div id="home-bg"></div>
+  <div id="home-content">
+    <div id="home-logo">
+      <div id="home-logo-icon">▶</div>
+      <div id="home-logo-text">
+        <span id="home-app-name">AI Video Editor</span>
+        <span id="home-app-sub">Powered by Claude AI</span>
+      </div>
+    </div>
+
+    <div id="home-actions">
+      <button id="home-btn-new" class="home-btn home-btn-primary">
+        <span class="home-btn-icon">＋</span>
+        <span>Yeni Proje</span>
+      </button>
+      <button id="home-btn-open" class="home-btn home-btn-secondary">
+        <span class="home-btn-icon">📂</span>
+        <span>Proje Aç</span>
+      </button>
+    </div>
+
+    <div id="home-recent">
+      <div id="home-recent-title">Son Projeler</div>
+      <div id="home-recent-list">
+        <div class="home-recent-empty">Henüz kayıtlı proje yok</div>
+      </div>
+    </div>
+
+    <div id="home-status">
+      <span id="home-agent-dot" class="status-dot disconnected"></span>
+      <span id="home-agent-label">Agent bağlanıyor...</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ EDİTÖR ══════════════ -->
+<div id="editor-screen" style="display:none">
 <div id="app">
 
+  <!-- Toolbar -->
   <div id="titlebar">
-    <span id="app-title">AI Video Editor</span>
-    <div id="titlebar-right">
-      <button id="btn-save-project" class="title-btn" title="Projeyi Kaydet">💾</button>
-      <button id="btn-load-project" class="title-btn" title="Proje Aç">📂</button>
-      <button id="theme-toggle"     class="title-btn" title="Tema Değiştir">☀</button>
-      <span id="connection-label">Bağlanıyor...</span>
-      <span id="connection-status" class="status-dot disconnected"></span>
+    <div id="tb-left">
+      <div id="tb-logo">▶</div>
+      <span id="tb-app-name">AI Video Editor</span>
+      <div id="tb-divider"></div>
+      <button id="tb-home-btn" title="Ana Ekran">⌂</button>
     </div>
-  </div>
 
-  <div id="left-panel">
-    <div class="panel-header">
-      <span>Medya</span>
-      <button class="btn btn-secondary" id="btn-wizard" style="padding:2px 8px;font-size:11px">+ Proje</button>
-    </div>
-    <div id="drop-zone">
-      <div class="drop-icon">⬇</div>
-      <p>Video ve fotoğrafları buraya sürükle</p>
-      <p class="drop-hint">MP4 · MOV · AVI · JPG · PNG</p>
-    </div>
-    <div id="media-list"></div>
-    <div class="panel-section">
-      <div class="panel-label">Müzik</div>
-      <div id="music-zone" class="mini-drop">🎵 Müzik sürükle (MP3, WAV)</div>
-      <div id="music-info"></div>
-    </div>
-  </div>
-
-  <div id="center-panel">
-    <div class="panel-header">
-      <span>Önizleme</span>
-      <div id="render-controls">
-        <button id="btn-demo"  class="btn btn-primary"   disabled>▶ Demo</button>
-        <button id="btn-final" class="btn btn-secondary" disabled>4K Final</button>
+    <div id="tb-center">
+      <div id="tb-project-wrap">
+        <span id="tb-project-icon">📁</span>
+        <span id="tb-project-name">Yeni Proje</span>
+        <span id="tb-project-style" class="tb-badge">dark</span>
       </div>
     </div>
-    <div id="video-wrap">
-      <video id="preview-player" controls></video>
-      <div id="player-placeholder">Demo render sonrası burada görünür</div>
-    </div>
-    <div id="progress-wrap">
-      <div id="progress-bar-bg"><div id="progress-bar" style="width:0%"></div></div>
-      <span id="progress-label">Hazır</span>
-    </div>
 
-    <!-- QA Raporu -->
-    <div id="qa-result" style="display:none">
-      <div id="qa-header">
-        <span id="qa-grade-badge">—</span>
-        <span id="qa-score-label">QA Skoru: —</span>
-        <button id="qa-toggle-detail" class="title-btn" title="Detay">▾</button>
-      </div>
-      <div id="qa-detail" style="display:none">
-        <ul id="qa-issues"></ul>
-        <ul id="qa-suggestions"></ul>
+    <div id="tb-right">
+      <button id="btn-save-project" class="tb-btn" title="Kaydet (Ctrl+S)">
+        <span>💾</span><span class="tb-btn-label">Kaydet</span>
+      </button>
+      <button id="btn-load-project" class="tb-btn" title="Proje Aç">
+        <span>📂</span><span class="tb-btn-label">Aç</span>
+      </button>
+      <div class="tb-sep"></div>
+      <button id="theme-toggle" class="tb-btn tb-btn-icon" title="Tema">☀</button>
+      <div class="tb-sep"></div>
+      <div id="tb-connection">
+        <span id="connection-status" class="status-dot disconnected"></span>
+        <span id="connection-label">Bağlanıyor</span>
       </div>
     </div>
   </div>
 
-  <div id="right-panel">
-    <div class="panel-header">AI Asistan</div>
-    <div id="chat-messages"></div>
-    <div id="quick-actions">
-      <button class="quick-btn" data-cmd="demo">Demo</button>
-      <button class="quick-btn" data-cmd="final">Final</button>
-      <button class="quick-btn" data-cmd="kurguyu açıkla">Açıkla</button>
-      <button class="quick-btn" data-cmd="qa raporu göster">QA</button>
+  <!-- Ana Paneller -->
+  <div id="main-layout">
+
+    <div id="left-panel">
+      <div class="panel-header">
+        <span class="panel-title">Medya</span>
+        <button class="btn btn-secondary btn-xs" id="btn-wizard">+ Sihirbaz</button>
+      </div>
+      <div id="drop-zone">
+        <div class="drop-icon">⬇</div>
+        <p>Video ve fotoğrafları buraya sürükle</p>
+        <p class="drop-hint">MP4 · MOV · AVI · JPG · PNG</p>
+      </div>
+      <div id="media-list"></div>
+      <div class="panel-section">
+        <div class="panel-label">Müzik</div>
+        <div id="music-zone" class="mini-drop">🎵 MP3, WAV sürükle</div>
+        <div id="music-info"></div>
+      </div>
+      <div class="panel-section">
+        <div class="panel-label">Logo</div>
+        <div id="logo-zone" class="mini-drop">🖼 PNG sürükle</div>
+        <div id="logo-info"></div>
+      </div>
     </div>
-    <div id="chat-input-area">
-      <textarea id="chat-input" placeholder="Komut yaz..." rows="2"></textarea>
-      <button id="send-btn">↑</button>
+
+    <div id="center-panel">
+      <div class="panel-header">
+        <span class="panel-title">Önizleme</span>
+        <div id="render-controls">
+          <button id="btn-demo"  class="btn btn-primary btn-sm"   disabled>▶ Demo</button>
+          <button id="btn-final" class="btn btn-secondary btn-sm" disabled>⬆ 4K Final</button>
+        </div>
+      </div>
+      <div id="video-wrap">
+        <video id="preview-player" controls></video>
+        <div id="player-placeholder">
+          <div class="placeholder-icon">🎬</div>
+          <p>Demo render sonrası burada görünür</p>
+        </div>
+      </div>
+      <div id="progress-wrap">
+        <div id="progress-bar-bg"><div id="progress-bar" style="width:0%"></div></div>
+        <span id="progress-label">Hazır</span>
+      </div>
+      <div id="qa-result" style="display:none">
+        <div id="qa-header">
+          <span id="qa-grade-badge">—</span>
+          <span id="qa-score-label">QA: —</span>
+          <button id="qa-toggle-detail" class="tb-btn-icon" title="Detay">▾</button>
+        </div>
+        <div id="qa-detail" style="display:none">
+          <ul id="qa-issues"></ul>
+          <ul id="qa-suggestions"></ul>
+        </div>
+      </div>
     </div>
+
+    <div id="right-panel">
+      <div class="panel-header">
+        <span class="panel-title">AI Asistan</span>
+        <button id="btn-clear-chat" class="tb-btn-icon" title="Sohbeti Temizle">✕</button>
+      </div>
+      <div id="chat-messages"></div>
+      <div id="quick-actions">
+        <button class="quick-btn" data-cmd="demo">Demo</button>
+        <button class="quick-btn" data-cmd="final">Final</button>
+        <button class="quick-btn" data-cmd="kurguyu açıkla">Açıkla</button>
+        <button class="quick-btn" data-cmd="qa raporu göster">QA</button>
+        <button class="quick-btn" data-cmd="renk düzelt">Renk</button>
+      </div>
+      <div id="chat-input-area">
+        <textarea id="chat-input" placeholder="Komut yaz..." rows="2"></textarea>
+        <button id="send-btn" title="Gönder (Enter)">↑</button>
+      </div>
+    </div>
+
   </div>
 
   <div id="timeline-panel">
-    <div class="panel-header">Timeline</div>
+    <div class="panel-header">
+      <span class="panel-title">Timeline</span>
+      <span id="timeline-info"></span>
+    </div>
     <div id="timeline-track"></div>
   </div>
 
 </div>
+</div>
+
+<!-- ══════════════ PROJE SEÇİM MODAL ══════════════ -->
+<div id="project-modal" style="display:none">
+  <div id="project-modal-box">
+    <div id="project-modal-header">
+      <span>Proje Aç</span>
+      <button id="project-modal-close" class="tb-btn-icon">✕</button>
+    </div>
+    <div id="project-modal-list"></div>
+    <div id="project-modal-empty" style="display:none">Kayıtlı proje bulunamadı</div>
+  </div>
+</div>
+
 <script src="wizard.js"></script>
 <script src="davinci_popup.js"></script>
 <script src="app.js"></script>
