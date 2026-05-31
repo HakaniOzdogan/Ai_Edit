@@ -83,6 +83,29 @@ async def health():
     return {"status": "ok", "connected_clients": len(connected_clients),
             "version": "1.0.0"}
 
+# ── Müzik İndirme ────────────────────────────────────────────────────────────
+
+@app.post("/music/info")
+async def music_info(data: dict):
+    """URL'den parça bilgisi al (başlık, süre) — indirme yapmaz."""
+    url = data.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url gerekli")
+    from agent.tools.music_downloader import get_info
+    return await get_info(url)
+
+
+@app.post("/music/download")
+async def music_download(data: dict):
+    """YouTube veya Spotify URL'sinden müzik indir."""
+    url = data.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url gerekli")
+    from agent.tools.music_downloader import download_music
+    result = await download_music(url)
+    return result
+
+
 # ── DaVinci Status ───────────────────────────────────────────────────────────
 
 @app.post("/davinci/autostart")

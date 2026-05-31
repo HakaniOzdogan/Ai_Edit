@@ -197,13 +197,26 @@ function stopLoadingAnimation() {
   const wrap  = document.getElementById('home-loading-wrap')
   const btns  = document.getElementById('home-actions')
 
-  if (fill)  fill.style.width      = '100%'
-  if (fill)  fill.style.background = 'var(--accent-green)'
-  if (label) label.textContent     = 'Agent hazır ✓'
-  if (sub)   sub.textContent       = `${_startupElapsed} saniyede yüklendi`
-  if (eta)   eta.textContent       = ''
-  if (spin)  spin.style.animation  = 'none'
-  if (spin)  spin.style.borderTopColor = 'var(--accent-green)'
+  if (fill)  { fill.style.width = '100%'; fill.style.background = 'var(--accent-green)' }
+  if (spin)  {
+    spin.style.animation   = 'none'
+    spin.style.border      = '2px solid var(--accent-green)'
+    spin.style.borderRadius = '50%'
+    spin.style.background  = 'var(--accent-green)'
+  }
+  if (label) label.textContent = 'Sistem hazır!'
+  if (sub)   sub.textContent   = `${_startupElapsed} saniyede yüklendi`
+  if (eta)   eta.textContent   = ''
+
+  // "Hazırız" büyük mesajı göster
+  const statusEl = document.getElementById('home-status')
+  if (statusEl) {
+    const readyMsg = document.createElement('div')
+    readyMsg.id = 'home-ready-msg'
+    readyMsg.textContent = 'Hazırız — Başlayalım!'
+    statusEl.appendChild(readyMsg)
+    requestAnimationFrame(() => readyMsg.classList.add('visible'))
+  }
   if (btns)  btns.style.opacity    = '1'
   if (btns)  btns.style.pointerEvents = 'auto'
   setTimeout(() => {
@@ -369,6 +382,62 @@ function renderMediaList() {
     el.textContent = p.split(/[\\/]/).pop(); el.title = p
     list.appendChild(el)
   })
+}
+
+// ── Müzik URL İndirme ─────────────────────────────────────────────────────────
+async function downloadMusicFromUrl(url) {
+  const statusEl = document.getElementById('music-url-status')
+  const btn      = document.getElementById('music-url-btn')
+  const base     = window.electronAPI?.agentHttpUrl() || 'http://localhost:8765'
+
+  if (!url.trim()) return
+  if (statusEl) statusEl.textContent = '🔍 Parça bilgisi alınıyor...'
+  if (btn)      btn.disabled = true
+
+  try {
+    // Önce parça bilgisini al
+    const infoRes  = await fetch(base + '/music/info', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    })
+    const info = await infoRes.json()
+
+    if (!info.ok) {
+      if (statusEl) statusEl.textContent = '❌ ' + (info.error || 'Bilgi alınamadı')
+      return
+    }
+
+    const mins = Math.floor((info.duration || 0) / 60)
+    const secs = String(Math.floor((info.duration || 0) % 60)).padStart(2, '0')
+    if (statusEl) statusEl.textContent = `⬇ "${info.title}" (${mins}:${secs}) indiriliyor...`
+
+    // İndir
+    const dlRes  = await fetch(base + '/music/download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(180000)  // 3 dk
+    })
+    const dl = await dlRes.json()
+
+    if (dl.ok && dl.path) {
+      media.music = dl.path
+      updateMusicInfo(dl.path)
+      if (statusEl) statusEl.textContent = `✓ ${info.title} (${dl.size_mb} MB)`
+      document.getElementById('btn-demo').disabled = !(media.clips.length || media.photos.length)
+      chat.addSystem(`Müzik indirildi: ${info.title}`)
+      // Input'u temizle
+      const inp = document.getElementById('music-url-input')
+      if (inp) inp.value = ''
+    } else {
+      if (statusEl) statusEl.textContent = '❌ ' + (dl.error || 'İndirme başarısız')
+      chat.addError('Müzik indirilemedi: ' + (dl.error || ''))
+    }
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '❌ Hata: ' + e.message
+    chat.addError('Müzik indirme hatası: ' + e.message)
+  } finally {
+    if (btn) btn.disabled = false
+  }
 }
 
 // ── Proje Kaydet ─────────────────────────────────────────────────────────────
@@ -640,6 +709,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── Render butonları
   document.getElementById('btn-demo')?.addEventListener('click',  () => sendRender('demo'))
   document.getElementById('btn-final')?.addEventListener('click', () => sendRender('final'))
+
+  // ── Müzik URL indirme
+  const musicUrlBtn = document.getElementById('music-url-btn')
+  const musicUrlInp = document.getElementById('music-url-input')
+  musicUrlBtn?.addEventListener('click', () => downloadMusicFromUrl(musicUrlInp?.value || ''))
+  musicUrlInp?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') downloadMusicFromUrl(musicUrlInp.value)
+  })
 
   // ── Chat temizle
   document.getElementById('btn-clear-chat')?.addEventListener('click', () => chat.clear())

@@ -49,13 +49,19 @@ class SemanticAnalyzer:
     def __init__(self):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         self.client = anthropic.Anthropic(api_key=api_key) if api_key else None
+        self._cache: dict = {}  # clip_path → sonuç cache (oturum boyunca)
 
     async def analyze_clip(self, clip_path: str, project_type: str = "product",
-                            style: str = "dark", sample_count: int = 3) -> dict:
+                            style: str = "dark", sample_count: int = 1) -> dict:
         """
         Klibin kilit karelerini Claude Vision ile analiz eder.
         project_type: product | event | social | travel
         """
+        # Cache kontrolü — aynı klip tekrar analiz edilmesin
+        cache_key = f"{clip_path}:{project_type}:{style}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         if not self.client:
             return self._fallback(clip_path)
 
@@ -77,8 +83,9 @@ class SemanticAnalyzer:
         if not results:
             return self._fallback(clip_path)
 
-        # Birden fazla kare sonucunu birleştir
-        return self._merge_results(results, clip_path)
+        result = self._merge_results(results, clip_path)
+        self._cache[cache_key] = result  # Cache'le
+        return result
 
     async def analyze_clips_batch(self, scored_clips: list, project_type: str = "product",
                                    style: str = "dark") -> list:
@@ -155,9 +162,10 @@ class SemanticAnalyzer:
                 img_b64 = base64.standard_b64encode(f.read()).decode()
 
             prompt = VISION_PROMPT.format(project_type=project_type, style=style)
+            # Haiku kullan: Vision için yeterli, 4x daha ucuz
             response = await asyncio.to_thread(
                 self.client.messages.create,
-                model="claude-sonnet-4-6",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=300,
                 messages=[{
                     "role": "user",
