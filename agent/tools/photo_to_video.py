@@ -51,12 +51,13 @@ async def photos_to_clips(photo_paths: list[str], duration: float = 3.0,
 def _convert(ffmpeg_bin: str, photo_path: str, out: str,
              duration: float, style: str) -> bool:
     import subprocess
-    # Ken Burns efekti: yavaş zoom-in (dark/warm için daha dramatik)
+    # Önce 1920x1080'e scale et (5K fotoğraflar için kritik), sonra Ken Burns
     zoom_factor = "1.05" if style in ("dark", "warm") else "1.02"
     vf = (
-        f"zoompan=z='min(zoom+0.0002,{zoom_factor})':d={int(duration*25)}:s=1920x1080:fps=25,"
         f"scale=1920:1080:force_original_aspect_ratio=decrease,"
-        f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black"
+        f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+        f"setsar=1,"
+        f"zoompan=z='min(zoom+0.0002,{zoom_factor})':d={int(duration*25)}:s=1920x1080:fps=25"
     )
     cmd = [
         ffmpeg_bin, "-y",

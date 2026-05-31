@@ -73,7 +73,15 @@ class FFmpegTool:
     def trim_cmd(self, input_path: str, start: float, duration: float) -> str:
         start    = max(0.0, float(start))
         duration = max(0.1, float(duration))
-        return f'-i "{input_path}" -ss {start:.3f} -t {duration:.3f} -c copy'
+        # -c copy keyframe sorununa neden olur (0sn segment).
+        # Re-encode + normalize çözünürlük karışımını önler.
+        return (
+            f'-ss {start:.3f} -i "{input_path}" -t {duration:.3f} '
+            f'-vf "scale=1920:1080:force_original_aspect_ratio=decrease,'
+            f'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,'
+            f'setsar=1" '
+            f'-c:v libx264 -crf 20 -preset fast -c:a aac -b:a 128k -ar 44100'
+        )
 
     def concat_cmd(self, filelist_path: str) -> str:
         return f'-f concat -safe 0 -i "{filelist_path}" -c copy'

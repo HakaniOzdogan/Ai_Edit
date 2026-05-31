@@ -1,13 +1,71 @@
 const BASE = () => window.electronAPI?.agentHttpUrl() || 'http://localhost:8765'
 
 // ── Ekran Geçişleri ───────────────────────────────────────────────────────────
-function showHome() {
+function showHome(askSave = true) {
+  // Kaydedilmemiş iş varsa sor
+  const hasMedia = media.clips.length > 0 || media.photos.length > 0
+  if (askSave && hasMedia) {
+    showConfirmModal(
+      'Ana Ekrana Dön',
+      'Mevcut proje kaybolabilir. Devam etmeden önce kaydetmek ister misin?',
+      [
+        { label: '💾 Kaydet ve Dön', action: async () => { await saveProject(); _goHome() } },
+        { label: '→ Kaydetmeden Dön',  action: _goHome },
+        { label: 'İptal',              action: null    },
+      ]
+    )
+    return
+  }
+  _goHome()
+}
+
+function _goHome() {
   document.getElementById('home-screen').style.display   = 'flex'
   document.getElementById('editor-screen').style.display = 'none'
-  // Agent bağlıysa projeleri yükle, değilse loading göster
-  if (agent.ws?.readyState === WebSocket.OPEN) {
-    loadRecentProjects()
-  }
+  document.getElementById('home-ready-msg')?.remove()
+  if (agent.ws?.readyState === WebSocket.OPEN) loadRecentProjects()
+}
+
+function resetProjectState() {
+  // Tüm proje state'ini sıfırla — yeni proje için temiz başlangıç
+  media.clips  = []
+  media.photos = []
+  media.music  = null
+  media.logo   = null
+
+  // UI temizle
+  renderMediaList()
+  const musicInfo = document.getElementById('music-info')
+  const logoInfo  = document.getElementById('logo-info')
+  const musicUrl  = document.getElementById('music-url-status')
+  const videoWrap = document.getElementById('preview-player')
+  const ph        = document.getElementById('player-placeholder')
+  const timeline  = document.getElementById('timeline-track')
+  const qaResult  = document.getElementById('qa-result')
+  const chatBox   = document.getElementById('chat-messages')
+
+  if (musicInfo) musicInfo.textContent = ''
+  if (logoInfo)  logoInfo.textContent  = ''
+  if (musicUrl)  musicUrl.textContent  = ''
+  if (videoWrap) { videoWrap.src = ''; videoWrap.style.display = 'none' }
+  if (ph)        ph.style.display = 'block'
+  if (timeline)  timeline.innerHTML = ''
+  if (qaResult)  qaResult.style.display = 'none'
+  if (chatBox)   chatBox.innerHTML = ''
+
+  // Progress sıfırla
+  resetProgress('Hazır')
+
+  // Butonları sıfırla
+  const btnDemo  = document.getElementById('btn-demo')
+  const btnFinal = document.getElementById('btn-final')
+  if (btnDemo)  btnDemo.disabled  = true
+  if (btnFinal) btnFinal.disabled = true
+
+  // Yeni proje ID
+  window.currentProjectId = 'proj_' + Date.now()
+  window.currentStyle     = 'dark'
+  updateToolbar()
 }
 
 function showEditor() {
@@ -52,6 +110,7 @@ async function loadRecentProjects() {
 
 async function openProjectById(id) {
   try {
+    resetProjectState()   // Önce temizle
     const res  = await fetch(BASE() + '/projects/' + id)
     const data = await res.json()
     applyProjectData(data)
@@ -492,6 +551,30 @@ function sendCommand(cmd) {
   })
 }
 
+// ── Genel Onay Modalı ─────────────────────────────────────────────────────────
+function showConfirmModal(title, message, buttons) {
+  document.getElementById('confirm-modal')?.remove()
+  const modal = document.createElement('div')
+  modal.id = 'confirm-modal'
+  const btnsHtml = buttons.map((b, i) =>
+    `<button class="btn ${i === 0 ? 'btn-primary' : 'btn-secondary'} btn-sm" data-idx="${i}">${b.label}</button>`
+  ).join('')
+  modal.innerHTML = `
+    <div id="confirm-box">
+      <div id="confirm-title">${title}</div>
+      <div id="confirm-msg">${message}</div>
+      <div id="confirm-btns">${btnsHtml}</div>
+    </div>`
+  document.body.appendChild(modal)
+  modal.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      modal.remove()
+      const action = buttons[parseInt(btn.dataset.idx)]?.action
+      if (action) action()
+    })
+  })
+}
+
 // ── Plan Onay Diyalogu ────────────────────────────────────────────────────────
 let _pendingCommand = null
 
@@ -659,8 +742,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── Ana Ekran butonları
   document.getElementById('home-btn-new')?.addEventListener('click', () => {
-    window.currentProjectId = 'proj_' + Date.now()
-    updateToolbar(); showEditor(); openWizard()
+    resetProjectState()   // Eski proje temizlenir
+    showEditor()
+    openWizard()
   })
   document.getElementById('home-btn-open')?.addEventListener('click', showProjectModal)
 

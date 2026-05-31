@@ -223,12 +223,13 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
 }
 
 #tb-home-btn {
-  background: transparent; border: none; color: var(--text-muted);
-  cursor: pointer; font-size: 16px; padding: 4px 8px;
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  color: var(--text-muted); cursor: pointer;
+  font-size: 12px; padding: 4px 10px;
   border-radius: var(--radius-sm); transition: all 0.15s;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: no-drag; white-space: nowrap;
 }
-#tb-home-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+#tb-home-btn:hover { color: var(--text-primary); background: var(--bg-hover); border-color: var(--border-bright); }
 
 #tb-center {
   display: flex; align-items: center; justify-content: center;
@@ -686,6 +687,21 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* ── Genel Onay Modalı ──────────────────────────────────────────────────────── */
+#confirm-modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 3000; backdrop-filter: blur(3px);
+}
+#confirm-box {
+  background: var(--bg-secondary); border: 1px solid var(--border-bright);
+  border-radius: var(--radius-lg); width: 360px; max-width: 92vw;
+  padding: 22px 24px; box-shadow: var(--shadow);
+}
+#confirm-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+#confirm-msg   { font-size: 13px; color: var(--text-muted); margin-bottom: 18px; line-height: 1.5; }
+#confirm-btns  { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* ── Plan Onay Diyalogu ─────────────────────────────────────────────────────── */
 #plan-overlay {
