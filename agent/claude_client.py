@@ -10,8 +10,11 @@ from agent.tools.music_analyzer import MusicAnalyzer
 from agent.tools.clip_scorer import ClipScorer
 from agent.tools.ffmpeg_tool import FFmpegTool
 from agent.tools.auto_editor import build_timeline, write_concat_list
+from agent.tools.photo_to_video import photos_to_clips
+from agent.tools.semantic_analyzer import SemanticAnalyzer
 from agent.tools.davinci_tool import DaVinciTool
 from agent.tools.aftereffects_tool import AfterEffectsTool
+from agent.tools.remotion_tool import RemotionTool
 from agent.tools.premiere_tool import PremiereTool
 from agent.qa.orchestrator import QAOrchestrator
 
@@ -321,9 +324,11 @@ class ClaudeClient:
         self.client   = anthropic.Anthropic(api_key=api_key)
         self.music    = MusicAnalyzer()
         self.scorer   = ClipScorer()
+        self.semantic = SemanticAnalyzer()
         self.ffmpeg   = FFmpegTool()
         self.davinci  = DaVinciTool()
         self.ae       = AfterEffectsTool()
+        self.remotion = RemotionTool()
         self.premiere = PremiereTool()
         self.qa       = QAOrchestrator()
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -464,11 +469,20 @@ Kısa tut, 150 kelimeyi geçme.""",
         yield {"type": "progress", "step": "direct_render", "status": "running",
                "message": f"{quality} render başlatılıyor..."}
 
-        clips = files.get("clips", [])
-        music = files.get("music")
+        clips  = files.get("clips", [])
+        photos = files.get("photos", [])
+        music  = files.get("music")
+
+        # Fotoğrafları video kliplere çevir ve havuza ekle
+        if photos:
+            yield {"type": "progress", "tool": "score_clips", "status": "running",
+                   "message": f"{len(photos)} fotoğraf video klibe dönüştürülüyor..."}
+            photo_clips = await photos_to_clips(photos, duration=3.0, style=context["style"])
+            clips = list(clips) + [pc["path"] for pc in photo_clips]
+            logger.info(f"{len(photo_clips)} fotoğraf video'ya dönüştürüldü")
 
         if not clips:
-            yield {"type": "error", "message": "Render için klip gerekli"}
+            yield {"type": "error", "message": "Render için klip veya fotoğraf gerekli"}
             return
 
         # Müzik analizi
@@ -481,7 +495,7 @@ Kısa tut, 150 kelimeyi geçme.""",
             yield {"type": "progress", "tool": "analyze_music", "status": "done",
                    "result_summary": f"BPM: {music_analysis.get('bpm')}"}
 
-        # Klip skorla
+        # Klip skorla (teknik metrikler)
         yield {"type": "progress", "tool": "score_clips", "status": "running",
                "message": "Klipler puanlanıyor..."}
         scored = await self.scorer.score(clips)
@@ -492,6 +506,17 @@ Kısa tut, 150 kelimeyi geçme.""",
             yield {"type": "error", "message": "Klip skorlama başarısız"}
             return
 
+        # Semantik analiz (Claude Vision — içerik anlama)
+        project_type = data.get("project_type", "product")
+        yield {"type": "progress", "step": "semantic", "status": "running",
+               "message": f"Kliplerin içeriği analiz ediliyor ({len(scored)} klip)..."}
+        try:
+            scored = await self.semantic.analyze_clips_batch(scored, project_type, context["style"])
+            yield {"type": "progress", "step": "semantic", "status": "done",
+                   "result_summary": f"Semantik analiz tamamlandı"}
+        except Exception as e:
+            logger.warning(f"Semantik analiz başarısız (teknik skorla devam): {e}")
+
         # Hedef süreyi data'dan al — kullanıcı "30sn istiyorum" demişse buraya gelir
         target_dur = float(data.get("target_duration") or context.get("target_duration") or 90.0)
         context["target_duration"] = target_dur
@@ -499,7 +524,9 @@ Kısa tut, 150 kelimeyi geçme.""",
         # Timeline oluştur — hedef süreye göre music_duration'ı kırp
         beat_times  = (music_analysis or {}).get("beat_times", [0.5 * i for i in range(60)])
         music_dur   = min((music_analysis or {}).get("duration", target_dur), target_dur)
-        timeline    = build_timeline(beat_times, scored, music_dur, context["style"])
+        drop_times  = (music_analysis or {}).get("drop_times", [])
+        timeline    = build_timeline(beat_times, scored, music_dur, context["style"],
+                                     drop_times=drop_times)
         context["timeline"] = timeline
 
         # Render
@@ -585,11 +612,13 @@ Kısa tut, 150 kelimeyi geçme.""",
                     float(inputs["music_duration"]),
                     float(target_dur) if target_dur else float(inputs["music_duration"])
                 )
+                drop_times = (context.get("music_analysis") or {}).get("drop_times", [])
                 tl = build_timeline(
                     inputs["beat_times"],
                     inputs["scored_clips"],
                     eff_duration,
-                    inputs.get("style", context.get("style", "dark"))
+                    inputs.get("style", context.get("style", "dark")),
+                    drop_times=drop_times,
                 )
                 context["timeline"] = tl
                 if target_dur:
@@ -673,22 +702,26 @@ Kısa tut, 150 kelimeyi geçme.""",
                 logo     = inputs["logo_path"]
                 out      = inputs.get("output_path")
                 duration = inputs.get("fade_in", 3.0)
-                # After Effects logo reveal
+                style    = context.get("style", "dark")
+
+                # 1. Remotion — en iyi kalite, Node.js yeterli
                 try:
-                    ae_result = await self.ae.logo_reveal(logo, duration, out)
-                    if ae_result.get("ok") and ae_result.get("output_path"):
-                        logger.info("add_logo: After Effects kullanıldı")
-                        ae_result["engine"] = "after_effects"
-                        context["last_output"] = ae_result["output_path"]
-                        return ae_result
-                except Exception:
-                    pass
-                # Fallback: FFmpeg overlay
-                result = await self.ffmpeg.add_logo(
-                    inp, logo,
-                    inputs.get("position", "bottom-right"),
-                    inputs.get("fade_in", 0.8), out
-                )
+                    rem = await self.remotion.logo_reveal(logo, style, duration)
+                    if rem.get("ok") and rem.get("output_path"):
+                        # Remotion çıktısını video üzerine overlay et
+                        overlay_out = out or self._auto_path("logo_overlay")
+                        ov = await self.ffmpeg.add_logo(inp, rem["output_path"], "bottom-right", 0.0, overlay_out)
+                        if ov.get("success"):
+                            logger.info("add_logo: Remotion kullanıldı")
+                            ov["engine"] = "remotion"
+                            context["last_output"] = ov["output_path"]
+                            return ov
+                except Exception as e:
+                    logger.warning(f"Remotion logo hata: {e}")
+
+                # 2. FFmpeg direkt overlay (en güvenilir fallback)
+                result = await self.ffmpeg.add_logo(inp, logo,
+                    inputs.get("position", "bottom-right"), inputs.get("fade_in", 0.8), out)
                 result["engine"] = "ffmpeg"
                 if result.get("success"):
                     context["last_output"] = result["output_path"]
@@ -700,23 +733,29 @@ Kısa tut, 150 kelimeyi geçme.""",
                 subtitle = inputs.get("subtitle", "")
                 out      = inputs.get("output_path")
                 duration = inputs.get("duration", 5.0)
-                # After Effects text overlay
+                style    = context.get("style", "dark")
+
+                # 1. Remotion — animasyonlu lower third
                 try:
-                    ae_result = await self.ae.add_text_overlay(title, subtitle, duration, out)
-                    if ae_result.get("ok") and ae_result.get("output_path"):
-                        logger.info("add_text: After Effects kullanıldı")
-                        ae_result["engine"] = "after_effects"
-                        context["last_output"] = ae_result["output_path"]
-                        return ae_result
-                except Exception:
-                    pass
-                # Fallback: FFmpeg drawtext
-                result = await self.ffmpeg.add_text(
-                    inp, title, subtitle,
-                    inputs.get("position", "bottom"),
-                    inputs.get("fade_in", 0.5),
-                    output_path=out
-                )
+                    rem = await self.remotion.text_overlay(title, subtitle, style, duration)
+                    if rem.get("ok") and rem.get("output_path"):
+                        # Video üzerine overlay
+                        overlay_out = out or self._auto_path("text_overlay")
+                        ov_cmd = (f'-i "{inp}" -i "{rem["output_path"]}" '
+                                  f'-filter_complex "[0:v][1:v]overlay=0:0" '
+                                  f'-c:v libx264 -crf 18 -preset fast -c:a copy')
+                        ov = await self.ffmpeg.run({"command": ov_cmd, "output_path": overlay_out})
+                        if ov.get("success"):
+                            logger.info("add_text: Remotion kullanıldı")
+                            ov["engine"] = "remotion"
+                            context["last_output"] = overlay_out
+                            return ov
+                except Exception as e:
+                    logger.warning(f"Remotion text hata: {e}")
+
+                # 2. FFmpeg drawtext fallback
+                result = await self.ffmpeg.add_text(inp, title, subtitle,
+                    inputs.get("position", "bottom"), inputs.get("fade_in", 0.5), output_path=out)
                 result["engine"] = "ffmpeg"
                 if result.get("success"):
                     context["last_output"] = result["output_path"]
@@ -832,15 +871,9 @@ Kısa tut, 150 kelimeyi geçme.""",
             seg_dur    = float(seg.get("duration", 2))
             transition = seg.get("transition", "hard_cut")
 
-            # Klip süresini ölç ve akıllı offset hesapla
-            clip_total_dur = self.ffmpeg.get_duration(clip)
-            if clip_total_dur > 0 and clip_total_dur > seg_dur:
-                # Klibin ortasından rastgele başla (başından değil)
-                import random
-                max_offset = max(0.0, clip_total_dur - seg_dur - 0.5)
-                offset = round(random.uniform(0.0, min(max_offset, clip_total_dur * 0.7)), 3)
-            else:
-                offset = 0.0
+            # clip_offset timeline'dan al (auto_editor'ın belirlediği)
+            # Rastgele offset kaldırıldı — kalite düşürüyor
+            offset = float(seg.get("clip_offset", 0.0))
 
             out = str(seg_dir / f"seg_{i:04d}.mp4")
             cmd = self.ffmpeg.trim_cmd(clip, offset, seg_dur)
@@ -933,10 +966,11 @@ Kısa tut, 150 kelimeyi geçme.""",
         xfade_type = {"dissolve": "fade", "wipeleft": "wipeleft"}.get(transition_type, "fade")
 
         # Re-encode: concat demuxer -c copy ile xfade çalışmaz, önce standart format
+        # CRF 18 = yüksek kalite (23 çok düşürüyor)
         encoded = []
         for i, p in enumerate(paths):
             enc = str(seg_dir / f"enc_{i:04d}.mp4")
-            enc_cmd = f'-i "{p}" -c:v libx264 -crf 23 -preset ultrafast -c:a aac -b:a 128k -ar 44100'
+            enc_cmd = f'-i "{p}" -c:v libx264 -crf 18 -preset fast -c:a aac -b:a 192k -ar 44100'
             r = await self.ffmpeg.run({"command": enc_cmd, "output_path": enc})
             encoded.append(enc if r["success"] else p)
 

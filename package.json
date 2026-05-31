@@ -4,47 +4,73 @@
   "description": "AI destekli video prodüksiyon asistanı",
   "main": "electron/main.js",
   "scripts": {
-    "start":       "cross-env ELECTRON_RUN_AS_NODE= electron .",
-    "build":       "electron-builder --win",
+    "start": "cross-env ELECTRON_RUN_AS_NODE= electron .",
+    "build": "electron-builder --win",
     "build:agent": "pyinstaller agent.spec --clean",
-    "build:all":   "npm run build:agent && npm run build"
+    "build:all": "npm run build:agent && npm run build"
   },
   "build": {
-    "appId":       "com.aivideo.editor",
+    "appId": "com.aivideo.editor",
     "productName": "AI Video Editor",
-    "copyright":   "Copyright © 2026",
+    "copyright": "Copyright © 2026",
     "directories": {
       "output": "dist"
     },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
-      "icon":   "assets/icon.ico"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
     },
     "nsis": {
-      "oneClick":                        false,
+      "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut":           true,
-      "createStartMenuShortcut":         true,
-      "shortcutName":                    "AI Video Editor",
-      "installerIcon":                   "assets/icon.ico",
-      "deleteAppDataOnUninstall":        false
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AI Video Editor",
+      "installerIcon": "assets/icon.ico",
+      "deleteAppDataOnUninstall": false
     },
     "files": [
       "electron/**/*",
       "!electron/node_modules/**/*"
     ],
     "extraResources": [
-      { "from": "dist/agent.exe", "to": "agent.exe"  },
-      { "from": "luts/",          "to": "luts/"      },
-      { "from": "profiles/",      "to": "profiles/"  }
+      {
+        "from": "dist/agent.exe",
+        "to": "agent.exe"
+      },
+      {
+        "from": "luts/",
+        "to": "luts/"
+      },
+      {
+        "from": "profiles/",
+        "to": "profiles/"
+      }
     ],
     "extraFiles": [
-      { "from": ".env.example",   "to": ".env.example" }
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      }
     ]
   },
   "devDependencies": {
-    "cross-env":       "^10.1.0",
-    "electron":        "^28.3.3",
+    "cross-env": "^10.1.0",
+    "electron": "^28.3.3",
     "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.469",
+    "@remotion/transitions": "^4.0.469",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "remotion": "^4.0.469"
   }
 }
