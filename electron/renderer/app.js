@@ -1,10 +1,13 @@
 const BASE = () => window.electronAPI?.agentHttpUrl() || 'http://localhost:8765'
 
 // ── Ekran Geçişleri ───────────────────────────────────────────────────────────
-function showHome()   {
+function showHome() {
   document.getElementById('home-screen').style.display   = 'flex'
   document.getElementById('editor-screen').style.display = 'none'
-  loadRecentProjects()
+  // Agent bağlıysa projeleri yükle, değilse loading göster
+  if (agent.ws?.readyState === WebSocket.OPEN) {
+    loadRecentProjects()
+  }
 }
 
 function showEditor() {
@@ -133,17 +136,95 @@ function updateToolbar() {
   if (styleEl) styleEl.textContent = window.currentStyle || 'dark'
 }
 
+// ── Startup Loading Animasyonu ────────────────────────────────────────────────
+let _startupTimer   = null
+let _startupElapsed = 0
+const STARTUP_STEPS = [
+  { at:  0, pct:  5, msg: 'Başlatılıyor...',          sub: 'Python ortamı hazırlanıyor' },
+  { at:  3, pct: 20, msg: 'FastAPI sunucu yükleniyor', sub: '~15 saniye sürebilir' },
+  { at:  6, pct: 40, msg: 'AI kütüphaneleri yükleniyor', sub: 'librosa, opencv başlatılıyor' },
+  { at: 10, pct: 60, msg: 'Neredeyse hazır...',        sub: 'Son modüller yükleniyor' },
+  { at: 14, pct: 80, msg: 'Bağlantı bekleniyor...',    sub: 'Agent hazırlanıyor' },
+  { at: 20, pct: 90, msg: 'Biraz daha bekle...',       sub: 'İlk başlatma uzun sürebilir' },
+  { at: 30, pct: 95, msg: 'Hâlâ yükleniyor...',        sub: 'Büyük proje yüklenirken normaldir' },
+]
+
+function startLoadingAnimation() {
+  _startupElapsed = 0
+
+  const fill  = document.getElementById('home-progress-fill')
+  const label = document.getElementById('home-agent-label')
+  const sub   = document.getElementById('home-loading-sub')
+  const eta   = document.getElementById('home-eta')
+  const btns  = document.getElementById('home-actions')
+
+  // Başlangıç durumu
+  if (fill)  { fill.style.transition = 'none'; fill.style.width = '0%' }
+  if (label) label.textContent = 'Başlatılıyor...'
+  if (sub)   sub.textContent   = 'Python ortamı hazırlanıyor'
+  if (eta)   eta.textContent   = '~25 saniye'
+  if (btns)  { btns.style.opacity = '0.4'; btns.style.pointerEvents = 'none' }
+
+  // Bir frame bekle, sonra transition'ı aç
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (fill) fill.style.transition = 'width 0.8s ease, background 0.4s'
+    })
+  })
+
+  if (_startupTimer) clearInterval(_startupTimer)
+  _startupTimer = setInterval(() => {
+    _startupElapsed++
+    const step = [...STARTUP_STEPS].reverse().find(s => _startupElapsed >= s.at)
+    if (!step) return
+    if (fill)  fill.style.width  = step.pct + '%'
+    if (label) label.textContent = step.msg
+    if (sub)   sub.textContent   = step.sub
+    if (eta) {
+      const rem = Math.max(0, 25 - _startupElapsed)
+      eta.textContent = rem > 0 ? ('~' + rem + ' saniye') : 'Neredeyse hazir...'
+    }
+  }, 1000)
+}
+
+function stopLoadingAnimation() {
+  if (_startupTimer) { clearInterval(_startupTimer); _startupTimer = null }
+  const fill  = document.getElementById('home-progress-fill')
+  const label = document.getElementById('home-agent-label')
+  const sub   = document.getElementById('home-loading-sub')
+  const eta   = document.getElementById('home-eta')
+  const spin  = document.getElementById('home-spinner')
+  const wrap  = document.getElementById('home-loading-wrap')
+  const btns  = document.getElementById('home-actions')
+
+  if (fill)  fill.style.width      = '100%'
+  if (fill)  fill.style.background = 'var(--accent-green)'
+  if (label) label.textContent     = 'Agent hazır ✓'
+  if (sub)   sub.textContent       = `${_startupElapsed} saniyede yüklendi`
+  if (eta)   eta.textContent       = ''
+  if (spin)  spin.style.animation  = 'none'
+  if (spin)  spin.style.borderTopColor = 'var(--accent-green)'
+  if (btns)  btns.style.opacity    = '1'
+  if (btns)  btns.style.pointerEvents = 'auto'
+  setTimeout(() => {
+    const s = document.getElementById('home-status')
+    if (s) s.style.opacity = '0.5'
+  }, 3000)
+}
+
 function setStatus(on) {
   const dot   = document.getElementById('connection-status')
   const label = document.getElementById('connection-label')
   const hdot  = document.getElementById('home-agent-dot')
-  const hlbl  = document.getElementById('home-agent-label')
   const cls   = 'status-dot ' + (on ? 'connected' : 'disconnected')
-  if (dot)   dot.className   = cls
+  if (dot)  dot.className  = cls
   if (label) label.textContent = on ? 'Bağlı' : 'Bağlanıyor'
-  if (hdot)  hdot.className  = cls
-  if (hlbl)  hlbl.textContent = on ? 'Agent hazır' : 'Agent bağlanıyor...'
-  if (on) chat.addSystem('Agent bağlandı ✓')
+  if (hdot) hdot.className = cls
+  if (on) {
+    stopLoadingAnimation()
+    loadRecentProjects()
+    chat.addSystem('Agent bağlandı ✓')
+  }
 }
 
 // ── Progress Bar ──────────────────────────────────────────────────────────────
@@ -342,6 +423,66 @@ function sendCommand(cmd) {
   })
 }
 
+// ── Plan Onay Diyalogu ────────────────────────────────────────────────────────
+let _pendingCommand = null
+
+function showPlanApproval(planText, originalCommand) {
+  _pendingCommand = originalCommand
+  // Varsa eskiyi kaldır
+  document.getElementById('plan-overlay')?.remove()
+
+  const overlay = document.createElement('div')
+  overlay.id = 'plan-overlay'
+  overlay.innerHTML = `
+    <div id="plan-box">
+      <div id="plan-header">
+        <span id="plan-icon">🎬</span>
+        <span id="plan-title">Yapılacaklar</span>
+      </div>
+      <div id="plan-body">${escapeHtml(planText).replace(/\n/g,'<br>')}</div>
+      <div id="plan-footer">
+        <button id="plan-approve" class="btn btn-primary">✓ Onayla — Başlat</button>
+        <button id="plan-edit"    class="btn btn-secondary">✏ Değiştir</button>
+        <button id="plan-cancel"  class="btn btn-secondary">✕ İptal</button>
+      </div>
+    </div>`
+  document.body.appendChild(overlay)
+
+  document.getElementById('plan-approve').addEventListener('click', () => {
+    overlay.remove()
+    chat.addSystem('Plan onaylandı — başlatılıyor...')
+    // Orijinal komutu "awaiting_approval: true" ile tekrar gönder
+    agent.send({
+      type:             'command',
+      command:          _pendingCommand,
+      awaiting_approval: true,
+      project_id:       window.currentProjectId,
+      style:            window.currentStyle || 'dark',
+      files: { clips: media.clips, photos: media.photos, music: media.music, logo: media.logo }
+    })
+    _pendingCommand = null
+  })
+
+  document.getElementById('plan-edit').addEventListener('click', () => {
+    overlay.remove()
+    const input = document.getElementById('chat-input')
+    if (input) { input.value = _pendingCommand || ''; input.focus() }
+    _pendingCommand = null
+  })
+
+  document.getElementById('plan-cancel').addEventListener('click', () => {
+    overlay.remove()
+    chat.addSystem('İptal edildi.')
+    _pendingCommand = null
+  })
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+
 // ── Tema Toggle ───────────────────────────────────────────────────────────────
 function toggleTheme() {
   const html  = document.documentElement
@@ -375,17 +516,26 @@ class AgentConnection {
   constructor(url) { this.url = url; this.ws = null; this.reconnectDelay = 2000; this.handlers = {} }
 
   connect() {
+    console.log('[ws] baglaniliyor:', this.url)
     try {
       this.ws = new WebSocket(this.url)
-      this.ws.onopen    = () => { setStatus(true); this.reconnectDelay = 2000 }
-      this.ws.onmessage = e  => { try { this._dispatch(JSON.parse(e.data)) } catch(err) { console.error('[ws]',err) } }
-      this.ws.onclose   = () => {
+      this.ws.onopen    = () => {
+        console.log('[ws] BAGLANDI!')
+        setStatus(true)
+        this.reconnectDelay = 2000
+      }
+      this.ws.onmessage = e  => { try { this._dispatch(JSON.parse(e.data)) } catch(err) { console.error('[ws parse]',err) } }
+      this.ws.onclose   = (e) => {
+        console.log('[ws] kapatildi, code:', e.code, 'reason:', e.reason)
         setStatus(false)
         setTimeout(() => this.connect(), this.reconnectDelay)
         this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, 10000)
       }
-      this.ws.onerror = e => console.error('[ws error]', e)
-    } catch(e) { setTimeout(() => this.connect(), this.reconnectDelay) }
+      this.ws.onerror = e => console.error('[ws ERROR]', e.type, e)
+    } catch(e) {
+      console.error('[ws connect exception]', e)
+      setTimeout(() => this.connect(), this.reconnectDelay)
+    }
   }
 
   send(data) {
@@ -404,6 +554,10 @@ class AgentConnection {
 const agent = new AgentConnection(
   window.electronAPI?.agentWsUrl() || 'ws://localhost:8765/ws'
 )
+
+agent.on('plan', d => {
+  showPlanApproval(d.text, d.command)
+})
 
 agent.on('progress', d => {
   setProgress(d)
@@ -501,8 +655,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveProject() }
   })
 
-  // Başlangıçta ana ekranı göster
+  console.log('[app] DOMContentLoaded, baslaniyor...')
+  // Başlangıçta ana ekranı göster + loading animasyonu
   showHome()
   updateToolbar()
+  startLoadingAnimation()
+  console.log('[app] agent.connect() cagriliyor, URL:', agent.url)
   agent.connect()
+  console.log('[app] init tamamlandi')
 })

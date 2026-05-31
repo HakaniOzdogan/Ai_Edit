@@ -1,10 +1,10 @@
 // DaVinci Resolve Otomatik Baslatma + Durum Popup
 
-const BASE = () => window.electronAPI?.agentHttpUrl() || 'http://localhost:8765'
+const DVR_BASE = () => window.electronAPI?.agentHttpUrl() || 'http://localhost:8765'
 
 async function checkDaVinciStatus() {
   try {
-    const res  = await fetch(BASE() + '/davinci/status', { signal: AbortSignal.timeout(5000) })
+    const res  = await fetch(DVR_BASE() + '/davinci/status', { signal: AbortSignal.timeout(5000) })
     const data = await res.json()
 
     if (!data.bridge_active) {
@@ -119,7 +119,7 @@ async function startAutoLaunch() {
   }, 5000)
 
   try {
-    const res  = await fetch(BASE() + '/davinci/autostart', {
+    const res  = await fetch(DVR_BASE() + '/davinci/autostart', {
       method: 'POST',
       signal: AbortSignal.timeout(60000)   // 60sn max
     })

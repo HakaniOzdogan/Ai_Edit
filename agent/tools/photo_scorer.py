@@ -6,8 +6,14 @@ import asyncio
 import logging
 from pathlib import Path
 
-import cv2
-import numpy as np
+_cv2 = None
+_np  = None
+
+def _load_libs():
+    global _cv2, _np
+    if _cv2 is None:
+        import cv2 as c; import numpy as n
+        _cv2 = c; _np = n
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +35,8 @@ class PhotoScorer:
         return results
 
     def _score_photo(self, path: str) -> dict:
+        _load_libs()
+        cv2, np = _cv2, _np
         img = cv2.imread(path)
         if img is None:
             return {"total_score": 0, "error": "Okunamadı"}
@@ -36,7 +44,6 @@ class PhotoScorer:
         h, w = img.shape[:2]
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Keskinlik (Laplacian varyansı)
         sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         sharpness_score = min(sharpness / 800.0, 1.0)
 

@@ -41,8 +41,16 @@
     </div>
 
     <div id="home-status">
-      <span id="home-agent-dot" class="status-dot disconnected"></span>
-      <span id="home-agent-label">Agent bağlanıyor...</span>
+      <div id="home-loading-wrap">
+        <div id="home-spinner"></div>
+        <div id="home-loading-text">
+          <span id="home-agent-label">Başlatılıyor...</span>
+          <span id="home-loading-sub">AI kütüphaneleri yükleniyor</span>
+        </div>
+        <span id="home-agent-dot" class="status-dot disconnected"></span>
+      </div>
+      <div id="home-progress-bg"><div id="home-progress-fill"></div></div>
+      <div id="home-eta"></div>
     </div>
   </div>
 </div>

@@ -1,8 +1,17 @@
 import asyncio
-import cv2
-import numpy as np
 import logging
 from pathlib import Path
+
+_cv2 = None
+_np  = None
+
+def _load_libs():
+    global _cv2, _np
+    if _cv2 is None:
+        import cv2 as cv2_lib
+        import numpy as np_lib
+        _cv2 = cv2_lib
+        _np  = np_lib
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +34,8 @@ class ClipScorer:
         return results
 
     def _score_clip(self, path: str) -> dict:
+        _load_libs()
+        cv2, np = _cv2, _np
         cap = cv2.VideoCapture(path)
         if not cap.isOpened():
             return {"total_score": 0, "error": "Dosya açılamadı"}
@@ -49,8 +60,7 @@ class ClipScorer:
 
             if prev_gray is not None:
                 flow = cv2.calcOpticalFlowFarneback(
-                    prev_gray, gray, None,
-                    0.5, 3, 15, 3, 5, 1.2, 0
+                    prev_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0
                 )
                 motion_list.append(float(np.mean(np.abs(flow))))
             prev_gray = gray

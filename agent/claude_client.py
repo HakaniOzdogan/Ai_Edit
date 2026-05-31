@@ -17,13 +17,38 @@ from agent.qa.orchestrator import QAOrchestrator
 
 logger = logging.getLogger(__name__)
 
-TEMP_DIR = Path(os.getenv("TEMP_DIR", "./temp")).resolve()
+TEMP_DIR   = Path(os.getenv("TEMP_DIR",   "./temp")).resolve()
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./temp/output")).resolve()
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 SYSTEM_PROMPT = """
-Sen bir AI video prodüksiyon uzmanısın. Kullanıcının ham medyasını (video, fotoğraf, müzik, logo)
-alıp profesyonel bir şekilde kurgulayıp render eden tam donanımlı bir sistemsin.
+Sen bir AI video prodüksiyon asistanısın.
 
-Her uygulamanın özel rolü var. Hepsi otomatik başlar, sen sadece doğru araçları çağır:
+━━━ EN ÖNEMLİ KURAL: ARAÇLARI NE ZAMAN KULLANACAĞINI BİL ━━━
+
+ARAÇ KULLANMA (sadece bunlarda):
+✅ "demo oluştur", "video çıkar", "kurgu yap", "render al" → TAM pipeline başlat
+✅ "rengi değiştir", "logo ekle", "başlık yaz" → İlgili tek aracı çağır
+✅ render_type = "demo" veya "final" mesajı geldiğinde → Direkt render
+✅ "daha hızlı yap", "tarzı değiştir" gibi revizyonlar → İlgili aracı çağır
+
+ARAÇ KULLANMA (bunlarda sadece konuş):
+❌ Sorular: "ne yapabilirsin?", "kaç klip yükledim?", "ne kadar sürer?"
+❌ Sohbet: "merhaba", "teşekkürler", "nasıl gidiyor?"
+❌ Bilgi istekleri: "dark tarz ne demek?", "LUT nedir?"
+❌ Onay/ret: "tamam", "hayır", "anladım"
+❌ Durum sorusu: "render tamamlandı mı?", "hangi aşamadayız?"
+
+KARIŞIK DURUM (önce sor, sonra karar ver):
+⚠️ "Bir video yap" gibi eksik bilgili istek → Önce 2-3 soru sor, cevap gelince başla
+⚠️ "şunu düzelt" ama ne olduğu belirsiz → Ne düzeltileceğini sor
+
+━━━ İLK PROJE KURULUMU (medya yüklenip genel istek geldiğinde) ━━━
+Şu bilgiler eksikse SOR (tek mesajda, kısa):
+1. Kaç saniyelik? (20/30/60/90sn)
+2. Hangi tarz? (dark/fast/warm/corp)
+3. Ne için? (ürün/etkinlik/sosyal medya)
+4. Müziğin tamamı mı, en iyi bölümü mü?
 
 ━━━ GÖREV DAĞILIMI ━━━
 
@@ -47,20 +72,27 @@ Her uygulamanın özel rolü var. Hepsi otomatik başlar, sen sadece doğru ara�
   • Tüm işlemler bittikten sonra son adım olarak çalışır
 
 ━━━ ARAÇLAR ━━━
-ANALİZ: analyze_music, score_clips
-KURGU:  build_timeline, render_timeline
-RENK:   color_grade (DaVinci→FFmpeg), apply_lut (DaVinci→FFmpeg)
-GRAFİK: add_logo (AE→FFmpeg), add_text (AE→FFmpeg), add_transition (FFmpeg xfade)
-SES:    normalize_audio, add_music
-FİNAL:  premiere_export (Premiere→FFmpeg fallback)
+ANALİZ:  analyze_music, score_clips
+MÜZİK:   select_music_section → müziğin en iyi/belirli bölümünü kes
+KURGU:   build_timeline (target_duration ile), render_timeline
+RENK:    color_grade (DaVinci→FFmpeg), apply_lut (DaVinci→FFmpeg)
+GRAFİK:  add_logo (AE→FFmpeg), add_text (AE→FFmpeg), add_transition (FFmpeg xfade)
+SES:     normalize_audio, add_music
+FİNAL:   premiere_export (Premiere→FFmpeg fallback)
 
-━━━ TAM AKIŞ ━━━
-1. analyze_music + score_clips  (paralel)
-2. build_timeline
-3. render_timeline              (FFmpeg — hızlı)
-4. color_grade                  (DaVinci veya FFmpeg)
-5. add_logo + add_text          (After Effects veya FFmpeg)
-6. premiere_export              (Premiere Pro veya FFmpeg 4K)
+━━━ TAM AKIŞ (sorular cevaplandıktan sonra) ━━━
+1. analyze_music + score_clips  (müzik analizi + klip puanlama)
+2. select_music_section         (kullanıcı 30sn istedi, müzik 3dk ise — en iyi 30sn'yi kes)
+3. build_timeline               (target_duration=kullanıcının istediği süre)
+4. render_timeline              (FFmpeg hızlı render)
+5. color_grade                  (DaVinci veya FFmpeg)
+6. add_logo + add_text          (After Effects veya FFmpeg)
+7. premiere_export              (Premiere Pro veya FFmpeg 4K)
+
+MÜZİK SEÇİM KURALI:
+- Kullanıcı "müziğin en iyi bölümü" dediyse → select_music_section(mode="best")
+- Kullanıcı "müziğin tamamını kullan" dediyse → select_music_section atla
+- Hedef video 30sn, müzik 3dk ise → select_music_section(duration=30) ZORUNLU
 
 TARZ TANIMLARI:
 dark → 4 beat/sahne · cool ton · dramatik · hard_cut geçiş
@@ -76,6 +108,28 @@ KURALLAR:
 """
 
 TOOLS = [
+    # ── Müzik Bölümü Seçimi ──────────────────────────────────────────────────
+    {
+        "name": "select_music_section",
+        "description": (
+            "Müziğin belirli bir bölümünü keser. "
+            "Hedef video süresi müzikten kısaysa KULLAN. "
+            "mode='best' → en yüksek enerjili bölüm (chorus/drop). "
+            "mode='start' → müziğin başından. "
+            "mode='custom' → start_time'dan duration kadar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path":  {"type": "string",  "description": "Müzik dosyası tam yolu"},
+                "duration":   {"type": "number",  "description": "İstenen süre (saniye)"},
+                "mode":       {"type": "string",  "enum": ["best", "start", "custom"],
+                               "description": "best=en iyi bölüm, start=baş, custom=özel"},
+                "start_time": {"type": "number",  "description": "Özel başlangıç (saniye, sadece mode=custom)"},
+            },
+            "required": ["file_path", "duration"]
+        }
+    },
     # ── Analiz ──────────────────────────────────────────────────────────────
     {
         "name": "analyze_music",
@@ -106,10 +160,12 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "beat_times":     {"type": "array", "items": {"type": "number"}},
-                "scored_clips":   {"type": "array"},
-                "music_duration": {"type": "number"},
-                "style":          {"type": "string", "enum": ["dark","fast","warm","corp"]}
+                "beat_times":      {"type": "array", "items": {"type": "number"}},
+                "scored_clips":    {"type": "array"},
+                "music_duration":  {"type": "number"},
+                "style":           {"type": "string", "enum": ["dark","fast","warm","corp"]},
+                "target_duration": {"type": "number",
+                                    "description": "Hedef video süresi saniye (ör. 30). Müzikten kısa olabilir."}
             },
             "required": ["beat_times","scored_clips","music_duration"]
         }
@@ -294,6 +350,40 @@ class ClaudeClient:
             "music_analysis":   None,
         }
 
+        # Onay bekleniyor mu?
+        if data.get("awaiting_approval"):
+            # Kullanıcı planı onayladı — devam et
+            context["plan_approved"] = True
+        else:
+            # Önce plan yap, kullanıcıya göster ve onay iste
+            plan_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.client.messages.create,
+                    model="claude-sonnet-4-6",
+                    max_tokens=1024,
+                    system=SYSTEM_PROMPT + """
+
+ŞU AN PLAN MODUNDASIN. Araç çağırma! Sadece şunları yaz:
+1. Ne anladığını (1-2 cümle)
+2. Ne yapacağını — adım adım liste
+3. Son satır: "Onaylarsanız başlayabilirim."
+
+Kısa tut, 150 kelimeyi geçme.""",
+                    messages=messages
+                ),
+                timeout=30.0
+            )
+            plan_text = next((b.text for b in plan_response.content if hasattr(b, "text")), "")
+
+            # Araç çağrısı yapmak istedi mi? (istemiyoruz bu aşamada)
+            needs_action = any(kw in command.lower() for kw in
+                ["demo", "render", "video", "kurgu", "başlat", "yap", "oluştur",
+                 "start", "create", "edit", "final", "çıkar"])
+
+            if needs_action and plan_text:
+                yield {"type": "plan", "text": plan_text, "command": command}
+                return  # Renderer onayını bekle
+
         yield {"type": "progress", "step": "claude_thinking", "status": "running",
                "message": "Claude düşünüyor..."}
 
@@ -402,17 +492,22 @@ class ClaudeClient:
             yield {"type": "error", "message": "Klip skorlama başarısız"}
             return
 
-        # Timeline oluştur
-        beat_times = (music_analysis or {}).get("beat_times", [0.5 * i for i in range(30)])
-        music_dur  = (music_analysis or {}).get("duration", 30.0)
-        timeline   = build_timeline(beat_times, scored, music_dur, context["style"])
+        # Hedef süreyi data'dan al — kullanıcı "30sn istiyorum" demişse buraya gelir
+        target_dur = float(data.get("target_duration") or context.get("target_duration") or 90.0)
+        context["target_duration"] = target_dur
+
+        # Timeline oluştur — hedef süreye göre music_duration'ı kırp
+        beat_times  = (music_analysis or {}).get("beat_times", [0.5 * i for i in range(60)])
+        music_dur   = min((music_analysis or {}).get("duration", target_dur), target_dur)
+        timeline    = build_timeline(beat_times, scored, music_dur, context["style"])
         context["timeline"] = timeline
 
         # Render
         render_inputs = {
-            "timeline":   timeline,
-            "music_path": music,
-            "quality":    quality,
+            "timeline":        timeline,
+            "music_path":      music,
+            "quality":         quality,
+            "target_duration": target_dur,
         }
         render_result = await self._render_timeline(render_inputs, context)
 
@@ -449,6 +544,32 @@ class ClaudeClient:
 
     async def _run_tool(self, name: str, inputs: dict, context: dict) -> dict:
         try:
+            if name == "select_music_section":
+                fp       = inputs["file_path"]
+                duration = float(inputs["duration"])
+                mode     = inputs.get("mode", "best")
+                start    = inputs.get("start_time", 0.0)
+
+                # Analiz zaten yapıldıysa best_section_start'ı kullan
+                if mode == "best":
+                    ma = context.get("music_analysis")
+                    if ma and "best_section_start" in ma:
+                        start = ma["best_section_start"]
+                    else:
+                        # Analiz yoksa burada yap
+                        analysis = await self.music.analyze(fp)
+                        start = analysis.get("best_section_start", 0.0)
+                        context["music_analysis"] = analysis
+                elif mode == "start":
+                    start = 0.0
+                # mode == "custom": start_time kullan
+
+                result = await self.music.extract_section(fp, start, duration)
+                if result.get("success"):
+                    context["selected_music"] = result["output_path"]
+                    logger.info(f"Müzik bölümü: {start:.1f}sn'den {duration:.1f}sn — {result['output_path']}")
+                return result
+
             if name == "analyze_music":
                 result = await self.music.analyze(inputs["file_path"])
                 context["music_analysis"] = result
@@ -458,16 +579,28 @@ class ClaudeClient:
                 return await self.scorer.score(inputs["clip_paths"])
 
             if name == "build_timeline":
+                target_dur = inputs.get("target_duration") or context.get("target_duration")
+                # target_duration varsa music_duration'ı buna sabitle
+                eff_duration = min(
+                    float(inputs["music_duration"]),
+                    float(target_dur) if target_dur else float(inputs["music_duration"])
+                )
                 tl = build_timeline(
                     inputs["beat_times"],
                     inputs["scored_clips"],
-                    inputs["music_duration"],
+                    eff_duration,
                     inputs.get("style", context.get("style", "dark"))
                 )
                 context["timeline"] = tl
-                return {"timeline": tl, "segment_count": len(tl)}
+                if target_dur:
+                    context["target_duration"] = float(target_dur)
+                return {"timeline": tl, "segment_count": len(tl),
+                        "effective_duration": eff_duration}
 
             if name == "render_timeline":
+                # select_music_section çağrıldıysa o müziği kullan
+                if context.get("selected_music") and not inputs.get("music_path"):
+                    inputs = {**inputs, "music_path": context["selected_music"]}
                 render_result = await self._render_timeline(inputs, context)
                 # Render başarılıysa QA çalıştır
                 if render_result.get("success"):
@@ -727,8 +860,8 @@ class ClaudeClient:
             return {"error": "Geçiş uygulaması başarısız"}
 
         suffix  = f"_{uuid.uuid4().hex[:6]}"
-        out_dir = TEMP_DIR / "output"
-        out_dir.mkdir(exist_ok=True)
+        out_dir = OUTPUT_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
 
         if quality == "final":
             out_path = str(out_dir / f"final{suffix}.mp4")
@@ -796,40 +929,44 @@ class ClaudeClient:
                                              "output_path": out})
             return out if result["success"] else None
 
-        # dissolve/wipeleft: xfade ile ikili birleştirme
-        xfade_map = {"dissolve": "fade", "wipeleft": "wipeleft"}
-        xfade_type = xfade_map.get(transition_type, "fade")
+        # dissolve/wipeleft: xfade için önce tutarlı formata re-encode
+        xfade_type = {"dissolve": "fade", "wipeleft": "wipeleft"}.get(transition_type, "fade")
+
+        # Re-encode: concat demuxer -c copy ile xfade çalışmaz, önce standart format
+        encoded = []
+        for i, p in enumerate(paths):
+            enc = str(seg_dir / f"enc_{i:04d}.mp4")
+            enc_cmd = f'-i "{p}" -c:v libx264 -crf 23 -preset ultrafast -c:a aac -b:a 128k -ar 44100'
+            r = await self.ffmpeg.run({"command": enc_cmd, "output_path": enc})
+            encoded.append(enc if r["success"] else p)
 
         try:
-            current = paths[0]
-            for i, next_clip in enumerate(paths[1:], 1):
+            current = encoded[0]
+            for i, nxt in enumerate(encoded[1:], 1):
                 merged = str(seg_dir / f"merged_{i:04d}.mp4")
-                result = await self.ffmpeg.add_transition(
-                    current, next_clip, xfade_type, 0.4, merged
-                )
-                if result.get("success"):
+                r = await self.ffmpeg.add_transition(current, nxt, xfade_type, 0.4, merged)
+                if r.get("success"):
                     current = merged
                 else:
-                    # Bu geçiş başarısız → direkt ekle
-                    tmp_list = str(seg_dir / f"tmp_concat_{i}.txt")
-                    with open(tmp_list, "w") as f:
-                        f.write(f"file '{current}'\nfile '{next_clip}'\n")
-                    tmp_out = str(seg_dir / f"tmp_merged_{i}.mp4")
-                    await self.ffmpeg.run({"command": self.ffmpeg.concat_cmd(tmp_list),
-                                           "output_path": tmp_out})
-                    current = tmp_out
+                    # Geçiş başarısız → bu ikiliyi concat ile birleştir
+                    tmp_list = str(seg_dir / f"tmp_{i}.txt")
+                    with open(tmp_list, "w", encoding="utf-8") as f:
+                        f.write(f"file '{current}'\nfile '{nxt}'\n")
+                    tmp_out = str(seg_dir / f"tmp_{i}.mp4")
+                    r2 = await self.ffmpeg.run({"command": self.ffmpeg.concat_cmd(tmp_list),
+                                                "output_path": tmp_out})
+                    if r2["success"]: current = tmp_out
             return current
         except Exception as e:
             logger.warning(f"Geçiş efekti başarısız, concat fallback: {e}")
-            # Fallback: basit concat
             list_path = str(seg_dir / "concat_fallback.txt")
             with open(list_path, "w", encoding="utf-8") as f:
-                for p in paths:
+                for p in encoded:
                     f.write(f"file '{p}'\n")
             out = str(seg_dir / "concat.mp4")
-            result = await self.ffmpeg.run({"command": self.ffmpeg.concat_cmd(list_path),
-                                             "output_path": out})
-            return out if result["success"] else None
+            r = await self.ffmpeg.run({"command": self.ffmpeg.concat_cmd(list_path),
+                                       "output_path": out})
+            return out if r["success"] else None
 
     async def _handle_ffmpeg(self, inputs: dict, context: dict) -> dict:
         op  = inputs["operation"]
@@ -854,9 +991,8 @@ class ClaudeClient:
 
     def _auto_path(self, op: str) -> str:
         uid = uuid.uuid4().hex[:8]
-        out = TEMP_DIR / "output"
-        out.mkdir(exist_ok=True)
-        return str(out / f"{op}_{uid}.mp4")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        return str(OUTPUT_DIR / f"{op}_{uid}.mp4")
 
     def _build_prompt(self, data: dict) -> str:
         files = data.get("files", {})

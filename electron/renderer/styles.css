@@ -134,9 +134,36 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
 .home-recent-del:hover { color: var(--error); background: rgba(239,68,68,0.1); }
 
 #home-status {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 11px; color: var(--text-muted);
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+  width: 340px; max-width: 90vw; transition: opacity 0.5s;
 }
+#home-loading-wrap { display: flex; align-items: center; gap: 12px; width: 100%; }
+#home-spinner {
+  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--border-bright); border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#home-loading-text { flex: 1; }
+#home-agent-label  { display: block; font-size: 12px; color: var(--text-primary); font-weight: 500; }
+#home-loading-sub  { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+#home-progress-bg  {
+  width: 100%; height: 3px; background: var(--bg-tertiary);
+  border-radius: 2px; overflow: hidden;
+}
+#home-progress-fill {
+  height: 100%; width: 5%; background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.8s ease, background 0.4s;
+  animation: progress-pulse 2.5s ease-in-out infinite;
+}
+
+@keyframes progress-pulse {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+#home-eta { font-size: 11px; color: var(--text-dim); min-height: 14px; text-align: center; }
 
 /* ══════════════════════════════════════════════════════════════
    EDİTÖR LAYOUT
@@ -633,3 +660,36 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* ── Plan Onay Diyalogu ─────────────────────────────────────────────────────── */
+#plan-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1500; backdrop-filter: blur(4px);
+}
+#plan-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-lg);
+  width: 480px; max-width: 94vw;
+  box-shadow: var(--shadow); overflow: hidden;
+}
+#plan-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 15px; font-weight: 700;
+}
+#plan-icon { font-size: 20px; }
+#plan-body {
+  padding: 16px 20px;
+  font-size: 13px; line-height: 1.7;
+  color: var(--text-muted);
+  max-height: 320px; overflow-y: auto;
+}
+#plan-footer {
+  display: flex; gap: 8px; padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+}
